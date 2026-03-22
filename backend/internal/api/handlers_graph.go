@@ -341,7 +341,13 @@ func (a *API) deleteNode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) getNodeEdges(w http.ResponseWriter, r *http.Request) {
-	a.json(w, http.StatusOK, []any{})
+	id := chi.URLParam(r, "nodeUuid")
+	edges, err := a.G.GetNodeEdges(r.Context(), id)
+	if err != nil {
+		a.json(w, http.StatusOK, []any{})
+		return
+	}
+	a.json(w, http.StatusOK, edgesToSDK(edges))
 }
 
 func (a *API) getNodeEpisodes(w http.ResponseWriter, r *http.Request) {

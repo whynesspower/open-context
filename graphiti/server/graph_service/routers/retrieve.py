@@ -127,6 +127,33 @@ async def get_node(uuid: str, graphiti: ZepGraphitiDep):
     )
 
 
+@router.get('/node/{uuid}/edges', status_code=status.HTTP_200_OK)
+async def get_node_edges(uuid: str, graphiti: ZepGraphitiDep):
+    from graphiti_core.errors import EdgeNotFoundError
+
+    try:
+        edges = await EntityEdge.get_by_node_uuid(graphiti.driver, uuid)
+    except EdgeNotFoundError:
+        edges = []
+    out: list[EdgeResult] = []
+    for e in edges:
+        out.append(
+            EdgeResult(
+                uuid=e.uuid,
+                name=e.name,
+                fact=e.fact,
+                source_node_uuid=e.source_node_uuid,
+                target_node_uuid=e.target_node_uuid,
+                valid_at=e.valid_at,
+                invalid_at=e.invalid_at,
+                created_at=e.created_at,
+                expired_at=e.expired_at,
+                episodes=list(e.episodes) if e.episodes else None,
+            )
+        )
+    return out
+
+
 @router.get('/nodes/{group_id}', status_code=status.HTTP_200_OK)
 async def list_nodes(group_id: str, graphiti: ZepGraphitiDep, limit: int = 500):
     cap = max(1, min(limit, 500))

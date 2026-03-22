@@ -214,6 +214,18 @@ func (c *Client) GetNode(ctx context.Context, uuid string) (*GraphitiNode, error
 	return &out, nil
 }
 
+func (c *Client) GetNodeEdges(ctx context.Context, uuid string) ([]GraphitiEdge, error) {
+	var out []GraphitiEdge
+	st, err := c.do(ctx, http.MethodGet, "node/"+uuid+"/edges", nil, &out)
+	if err != nil {
+		return nil, err
+	}
+	if st != http.StatusOK {
+		return nil, fmt.Errorf("graphiti node edges: status %d", st)
+	}
+	return out, nil
+}
+
 func (c *Client) UpdateNode(ctx context.Context, uuid string, body map[string]any) (*GraphitiNode, error) {
 	var out GraphitiNode
 	st, err := c.do(ctx, http.MethodPatch, "node/"+uuid, body, &out)
