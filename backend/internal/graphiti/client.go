@@ -214,6 +214,27 @@ func (c *Client) GetNode(ctx context.Context, uuid string) (*GraphitiNode, error
 	return &out, nil
 }
 
+func (c *Client) GetNodeEpisodes(ctx context.Context, uuid string) (json.RawMessage, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("%s/node/%s/episodes", c.BaseURL, uuid), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("graphiti node episodes: status %d %s", resp.StatusCode, string(raw))
+	}
+	return json.RawMessage(raw), nil
+}
+
 func (c *Client) GetNodeEdges(ctx context.Context, uuid string) ([]GraphitiEdge, error) {
 	var out []GraphitiEdge
 	st, err := c.do(ctx, http.MethodGet, "node/"+uuid+"/edges", nil, &out)

@@ -127,6 +127,32 @@ async def get_node(uuid: str, graphiti: ZepGraphitiDep):
     )
 
 
+@router.get('/node/{uuid}/episodes', status_code=status.HTTP_200_OK)
+async def get_node_episodes(uuid: str, graphiti: ZepGraphitiDep):
+    records, _, _ = await graphiti.driver.execute_query(
+        """
+        MATCH (ep:Episodic)-[:MENTIONS]->(n:Entity {uuid: $uuid})
+        RETURN ep.uuid AS uuid, ep.name AS name, ep.group_id AS group_id,
+               ep.source AS source, ep.source_description AS source_description,
+               ep.content AS content, ep.created_at AS created_at
+        """,
+        uuid=uuid,
+        routing_='r',
+    )
+    episodes = []
+    for r in records:
+        episodes.append({
+            'uuid': r['uuid'],
+            'name': r.get('name', ''),
+            'group_id': r.get('group_id', ''),
+            'source': r.get('source', ''),
+            'source_description': r.get('source_description', ''),
+            'content': r.get('content', ''),
+            'created_at': r.get('created_at'),
+        })
+    return {'episodes': episodes}
+
+
 @router.get('/node/{uuid}/edges', status_code=status.HTTP_200_OK)
 async def get_node_edges(uuid: str, graphiti: ZepGraphitiDep):
     from graphiti_core.errors import EdgeNotFoundError

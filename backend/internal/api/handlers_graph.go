@@ -351,7 +351,15 @@ func (a *API) getNodeEdges(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) getNodeEpisodes(w http.ResponseWriter, r *http.Request) {
-	a.json(w, http.StatusOK, map[string]any{"episodes": []any{}})
+	id := chi.URLParam(r, "nodeUuid")
+	raw, err := a.G.GetNodeEpisodes(r.Context(), id)
+	if err != nil {
+		a.json(w, http.StatusOK, map[string]any{"episodes": []any{}})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
 }
 
 func (a *API) getEdge(w http.ResponseWriter, r *http.Request) {
