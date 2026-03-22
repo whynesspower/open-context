@@ -174,7 +174,38 @@ func (a *API) graphAddBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) graphAddFactTriple(w http.ResponseWriter, r *http.Request) {
-	a.json(w, http.StatusOK, map[string]any{"uuid": uuid.NewString(), "message": "queued"})
+	var body struct {
+		Subject   string `json:"subject_node_name"`
+		Predicate string `json:"predicate_name"`
+		Object    string `json:"object_node_name"`
+		GraphID   string `json:"graph_id"`
+		UserID    string `json:"user_id"`
+		Fact      string `json:"fact"`
+	}
+	if err := a.readJSON(r, &body); err != nil {
+		a.err(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	group := body.GraphID
+	if group == "" {
+		group = body.UserID
+	}
+	if group == "" || body.Subject == "" || body.Predicate == "" || body.Object == "" {
+		a.err(w, http.StatusBadRequest, "subject_node_name, predicate_name, object_node_name, and graph_id or user_id required")
+		return
+	}
+	result, err := a.G.AddFactTriple(r.Context(), graphiti.AddFactTripleRequest{
+		Subject:   body.Subject,
+		Predicate: body.Predicate,
+		Object:    body.Object,
+		GroupID:   group,
+		Fact:      body.Fact,
+	})
+	if err != nil {
+		a.err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.json(w, http.StatusOK, factToEdge(*result))
 }
 
 func (a *API) graphClone(w http.ResponseWriter, r *http.Request) {

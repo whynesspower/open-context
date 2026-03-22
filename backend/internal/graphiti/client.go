@@ -171,6 +171,26 @@ func (c *Client) GetMemory(ctx context.Context, req GetMemoryRequest) (*GetMemor
 	return &out, nil
 }
 
+type AddFactTripleRequest struct {
+	Subject  string `json:"subject"`
+	Predicate string `json:"predicate"`
+	Object   string `json:"object"`
+	GroupID  string `json:"group_id"`
+	Fact     string `json:"fact,omitempty"`
+}
+
+func (c *Client) AddFactTriple(ctx context.Context, req AddFactTripleRequest) (*FactResult, error) {
+	var out FactResult
+	st, err := c.do(ctx, http.MethodPost, "add-fact-triple", req, &out)
+	if err != nil {
+		return nil, err
+	}
+	if st != http.StatusCreated && st != http.StatusOK {
+		return nil, fmt.Errorf("graphiti add-fact-triple: status %d", st)
+	}
+	return &out, nil
+}
+
 func (c *Client) AddEntityNode(ctx context.Context, req AddEntityNodeRequest) error {
 	st, err := c.do(ctx, http.MethodPost, "entity-node", req, nil)
 	if err != nil {

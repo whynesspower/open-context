@@ -13,3 +13,11 @@ class AddEntityNodeRequest(BaseModel):
     group_id: str = Field(..., description='The group id of the node to add')
     name: str = Field(..., description='The name of the node to add')
     summary: str = Field(default='', description='The summary of the node to add')
+
+
+class AddFactTripleRequest(BaseModel):
+    subject: str = Field(..., description='The subject entity name')
+    predicate: str = Field(..., description='The relationship/predicate name')
+    object: str = Field(..., description='The object entity name')
+    group_id: str = Field(..., description='The group id for the triple')
+    fact: str = Field(default='', description='Human-readable fact sentence')
