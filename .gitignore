@@ -1,0 +1,11 @@
+.env
+.env.local
+.DS_Store
+node_modules
+.next
+dist
+*.pyc
+__pycache__
+.venv
+backend/server
+tmp/

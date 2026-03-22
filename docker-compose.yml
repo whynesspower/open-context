@@ -1,0 +1,108 @@
+services:
+  neo4j:
+    image: neo4j:5.22.0
+    environment:
+      NEO4J_AUTH: neo4j/zepzepzep
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p zepzepzep 'RETURN 1' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  postgres:
+    image: ankane/pgvector:v0.5.1
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: opencontext
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d opencontext"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  graphiti:
+    build:
+      context: ./graphiti/server
+      dockerfile: Dockerfile
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: zepzepzep
+      MODEL_NAME: ${MODEL_NAME:-gpt-4o-mini}
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    ports:
+      - "8003:8003"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/healthcheck')\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      OPEN_CONTEXT_HTTP_ADDR: :8000
+      OPEN_CONTEXT_API_KEY: ${OPEN_CONTEXT_API_KEY:-changeme}
+      POSTGRES_DSN: postgres://postgres:postgres@postgres:5432/opencontext?sslmode=disable
+      GRAPHITI_SERVICE_URL: http://graphiti:8003
+      OPEN_CONTEXT_PROJECT_UUID: ${OPEN_CONTEXT_PROJECT_UUID:-00000000-0000-4000-8000-000000000001}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      graphiti:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+      OPEN_CONTEXT_INTERNAL_API_URL: http://backend:8000
+      OPEN_CONTEXT_API_KEY: ${OPEN_CONTEXT_API_KEY:-changeme}
+      OPEN_CONTEXT_ADMIN_USERNAME: ${OPEN_CONTEXT_ADMIN_USERNAME:-admin}
+      OPEN_CONTEXT_ADMIN_PASSWORD: ${OPEN_CONTEXT_ADMIN_PASSWORD:-admin}
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+  example:
+    build:
+      context: .
+      dockerfile: examples/fastapi-app/Dockerfile
+    environment:
+      ZEP_API_URL: http://backend:8000
+      ZEP_API_KEY: ${OPEN_CONTEXT_API_KEY:-changeme}
+    depends_on:
+      - backend
+    ports:
+      - "8080:8080"
+
+volumes:
+  neo4j_data:
+  pg_data:
