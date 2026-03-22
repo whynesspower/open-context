@@ -192,7 +192,15 @@ func (a *API) addUserSummaryInstructions(w http.ResponseWriter, r *http.Request)
 }
 
 func (a *API) deleteUserSummaryInstructions(w http.ResponseWriter, r *http.Request) {
-	_, _ = a.DB.NewDelete().Model((*store.UserSummaryInstructionRow)(nil)).Where("project_uuid = ?", a.DB.Project).Exec(r.Context())
+	var body struct {
+		InstructionNames []string `json:"instruction_names"`
+	}
+	_ = a.readJSON(r, &body)
+	q := a.DB.NewDelete().Model((*store.UserSummaryInstructionRow)(nil)).Where("project_uuid = ?", a.DB.Project)
+	if len(body.InstructionNames) > 0 {
+		q = q.Where("name IN (?)", bun.In(body.InstructionNames))
+	}
+	_, _ = q.Exec(r.Context())
 	a.json(w, http.StatusOK, map[string]any{"message": "ok"})
 }
 
