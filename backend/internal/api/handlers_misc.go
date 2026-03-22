@@ -21,7 +21,7 @@ func (a *API) getTask(w http.ResponseWriter, r *http.Request) {
 	var t store.TaskRecord
 	err := a.DB.NewSelect().Model(&t).Where("task_id = ? AND project_uuid = ?", id, a.DB.Project).Scan(r.Context())
 	if err != nil {
-		a.json(w, http.StatusOK, map[string]any{"task_id": id, "status": "completed", "progress": 1.0})
+		a.err(w, http.StatusNotFound, "task not found")
 		return
 	}
 	a.json(w, http.StatusOK, map[string]any{"task_id": t.TaskID, "status": t.Status, "progress": t.Progress, "error": t.Error})
