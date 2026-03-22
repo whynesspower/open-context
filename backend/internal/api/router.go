@@ -95,6 +95,7 @@ func (a *API) Handler() http.Handler {
 		r.Get("/graph/episodes/graph/{graphId}", a.getEpisodesByGraph)
 		r.Get("/graph/episodes/user/{userId}", a.getEpisodesByUser)
 		r.Get("/graph/episodes/{episodeUuid}", a.getEpisode)
+		r.Get("/graph/episodes/{episodeUuid}/mentions", a.getEpisodeMentions)
 		r.Delete("/graph/episodes/{episodeUuid}", a.deleteEpisode)
 	})
 

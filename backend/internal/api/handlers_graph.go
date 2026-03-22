@@ -449,6 +449,18 @@ func (a *API) getEpisode(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(raw)
 }
 
+func (a *API) getEpisodeMentions(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "episodeUuid")
+	raw, err := a.G.GetEpisodeMentions(r.Context(), id)
+	if err != nil {
+		a.json(w, http.StatusOK, map[string]any{"nodes": []any{}, "edges": []any{}})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+}
+
 func (a *API) deleteEpisode(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "episodeUuid")
 	_ = a.G.DeleteEpisode(r.Context(), id)

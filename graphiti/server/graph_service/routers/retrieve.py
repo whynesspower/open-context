@@ -98,6 +98,66 @@ async def get_episode_by_uuid(uuid: str, graphiti: ZepGraphitiDep):
     }
 
 
+@router.get('/episode/{uuid}/mentions', status_code=status.HTTP_200_OK)
+async def get_episode_mentions(uuid: str, graphiti: ZepGraphitiDep):
+    records, _, _ = await graphiti.driver.execute_query(
+        """
+        MATCH (ep:Episodic {uuid: $uuid})-[:MENTIONS]->(n:Entity)
+        RETURN n.uuid AS uuid, n.name AS name, n.summary AS summary,
+               n.group_id AS group_id, n.created_at AS created_at,
+               labels(n) AS labels
+        """,
+        uuid=uuid,
+        routing_='r',
+    )
+    nodes: list[NodeResult] = []
+    for r in records:
+        raw_labels = r.get('labels', [])
+        labels = [lbl for lbl in (raw_labels or []) if lbl != 'Entity']
+        nodes.append(
+            NodeResult(
+                uuid=r['uuid'],
+                name=r.get('name', ''),
+                summary=r.get('summary', ''),
+                labels=labels or None,
+                group_id=r.get('group_id'),
+                created_at=r.get('created_at'),
+            )
+        )
+
+    edge_records, _, _ = await graphiti.driver.execute_query(
+        """
+        MATCH (ep:Episodic {uuid: $uuid})-[:MENTIONS]->(n:Entity)
+        WITH collect(n.uuid) AS node_uuids
+        MATCH (s:Entity)-[e:RELATES_TO]->(t:Entity)
+        WHERE e.uuid IS NOT NULL AND (s.uuid IN node_uuids OR t.uuid IN node_uuids)
+              AND $uuid IN e.episodes
+        RETURN DISTINCT e.uuid AS uuid, e.name AS name, e.fact AS fact,
+               s.uuid AS source_node_uuid, t.uuid AS target_node_uuid,
+               e.created_at AS created_at, e.valid_at AS valid_at,
+               e.invalid_at AS invalid_at, e.expired_at AS expired_at
+        """,
+        uuid=uuid,
+        routing_='r',
+    )
+    edges: list[EdgeResult] = []
+    for r in edge_records:
+        edges.append(
+            EdgeResult(
+                uuid=r['uuid'],
+                name=r.get('name', ''),
+                fact=r.get('fact', ''),
+                source_node_uuid=r.get('source_node_uuid', ''),
+                target_node_uuid=r.get('target_node_uuid', ''),
+                created_at=r.get('created_at'),
+                valid_at=r.get('valid_at'),
+                invalid_at=r.get('invalid_at'),
+                expired_at=r.get('expired_at'),
+            )
+        )
+    return {'nodes': nodes, 'edges': edges}
+
+
 @router.get('/episodes/{group_id}', status_code=status.HTTP_200_OK)
 async def get_episodes(group_id: str, last_n: int, graphiti: ZepGraphitiDep):
     episodes = await graphiti.retrieve_episodes(
