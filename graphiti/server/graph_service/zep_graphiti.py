@@ -110,6 +110,9 @@ def get_fact_result_from_edge(edge: EntityEdge):
         expired_at=edge.expired_at,
         source_node_uuid=edge.source_node_uuid,
         target_node_uuid=edge.target_node_uuid,
+        score=getattr(edge, 'score', None),
+        relevance=getattr(edge, 'relevance', None),
+        attributes=getattr(edge, 'attributes', None),
     )
 
 

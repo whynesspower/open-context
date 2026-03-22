@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/opencontext/backend/internal/graphiti"
 	"github.com/opencontext/backend/internal/store"
+	"github.com/uptrace/bun"
 )
 
 func (a *API) postUsers(w http.ResponseWriter, r *http.Request) {
@@ -24,16 +26,20 @@ func (a *API) postUsers(w http.ResponseWriter, r *http.Request) {
 		a.err(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	_ = body.DisableDefaultOntology
+	disableOntology := false
+	if body.DisableDefaultOntology != nil {
+		disableOntology = *body.DisableDefaultOntology
+	}
 	u := &store.User{
-		UserID:      body.UserID,
-		Email:       body.Email,
-		FirstName:   body.FirstName,
-		LastName:    body.LastName,
-		ProjectUUID: a.DB.Project,
-		Metadata:    body.Metadata,
-		CreatedAt:   a.now(),
-		UpdatedAt:   a.now(),
+		UserID:                 body.UserID,
+		Email:                  body.Email,
+		FirstName:              body.FirstName,
+		LastName:               body.LastName,
+		ProjectUUID:            a.DB.Project,
+		Metadata:               body.Metadata,
+		DisableDefaultOntology: disableOntology,
+		CreatedAt:              a.now(),
+		UpdatedAt:              a.now(),
 	}
 	if _, err := a.DB.NewInsert().Model(u).Exec(r.Context()); err != nil {
 		a.err(w, http.StatusBadRequest, "user exists or db error")
@@ -45,7 +51,7 @@ func (a *API) postUsers(w http.ResponseWriter, r *http.Request) {
 		Name:    body.UserID,
 		Summary: "user",
 	})
-	a.json(w, http.StatusOK, userToJSON(u))
+	a.json(w, http.StatusOK, userToJSON(u, 0))
 }
 
 func (a *API) getUsersOrdered(w http.ResponseWriter, r *http.Request) {
@@ -64,9 +70,17 @@ func (a *API) getUsersOrdered(w http.ResponseWriter, r *http.Request) {
 		a.err(w, http.StatusInternalServerError, "db error")
 		return
 	}
+
+	// Bulk fetch session counts
+	userIDs := make([]string, 0, len(users))
+	for i := range users {
+		userIDs = append(userIDs, users[i].UserID)
+	}
+	sessionCounts := a.bulkSessionCounts(r.Context(), userIDs)
+
 	out := make([]any, 0, len(users))
 	for i := range users {
-		out = append(out, userToJSON(&users[i]))
+		out = append(out, userToJSON(&users[i], sessionCounts[users[i].UserID]))
 	}
 	a.json(w, http.StatusOK, map[string]any{"users": out, "total_count": count, "row_count": len(out)})
 }
@@ -79,7 +93,8 @@ func (a *API) getUser(w http.ResponseWriter, r *http.Request) {
 		a.err(w, http.StatusNotFound, "not found")
 		return
 	}
-	a.json(w, http.StatusOK, userToJSON(&u))
+	count, _ := a.DB.NewSelect().Model((*store.Session)(nil)).Where("user_id = ? AND project_uuid = ?", u.UserID, a.DB.Project).Count(r.Context())
+	a.json(w, http.StatusOK, userToJSON(&u, count))
 }
 
 func (a *API) patchUser(w http.ResponseWriter, r *http.Request) {
@@ -106,12 +121,16 @@ func (a *API) patchUser(w http.ResponseWriter, r *http.Request) {
 	if v, ok := body["metadata"].(map[string]any); ok {
 		u.Metadata = v
 	}
+	if v, ok := body["disable_default_ontology"].(bool); ok {
+		u.DisableDefaultOntology = v
+	}
 	u.UpdatedAt = a.now()
 	if _, err := a.DB.NewUpdate().Model(&u).WherePK().Exec(r.Context()); err != nil {
 		a.err(w, http.StatusInternalServerError, "update failed")
 		return
 	}
-	a.json(w, http.StatusOK, userToJSON(&u))
+	count, _ := a.DB.NewSelect().Model((*store.Session)(nil)).Where("user_id = ? AND project_uuid = ?", u.UserID, a.DB.Project).Count(r.Context())
+	a.json(w, http.StatusOK, userToJSON(&u, count))
 }
 
 func (a *API) deleteUser(w http.ResponseWriter, r *http.Request) {
@@ -141,7 +160,11 @@ func (a *API) getUserThreads(w http.ResponseWriter, r *http.Request) {
 	for i := range sessions {
 		out = append(out, threadToJSON(&sessions[i], a.DB.Project))
 	}
-	a.json(w, http.StatusOK, out)
+	a.json(w, http.StatusOK, map[string]any{
+		"threads":        out,
+		"total_count":    len(out),
+		"response_count": len(out),
+	})
 }
 
 func (a *API) getUserNode(w http.ResponseWriter, r *http.Request) {
@@ -158,10 +181,18 @@ func (a *API) getUserNode(w http.ResponseWriter, r *http.Request) {
 	n := nodes[0]
 	a.json(w, http.StatusOK, map[string]any{"node": map[string]any{
 		"uuid": n.UUID, "name": n.Name, "summary": n.Summary, "labels": n.Labels, "created_at": n.CreatedAt,
+		"score": nil, "relevance": nil, "attributes": map[string]any{},
 	}})
 }
 
 func (a *API) warmUser(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "userId")
+	// Execute a lightweight search to warm Neo4j page cache for this user's graph
+	_, _ = a.G.Search(r.Context(), graphiti.SearchQuery{
+		GroupIDs: []string{id},
+		Query:    "",
+		MaxFacts: 1,
+	})
 	a.json(w, http.StatusOK, map[string]any{"message": "warmed", "success": true})
 }
 
@@ -239,6 +270,14 @@ func (a *API) deleteThread(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) getThreadMessages(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "threadId")
+
+	// Fetch thread to get created_at and user_id
+	var s store.Session
+	if err := a.DB.NewSelect().Model(&s).Where("session_id = ? AND project_uuid = ?", id, a.DB.Project).Scan(r.Context()); err != nil {
+		a.err(w, http.StatusNotFound, "thread not found")
+		return
+	}
+
 	var msgs []store.Message
 	err := a.DB.NewSelect().Model(&msgs).Where("session_id = ? AND project_uuid = ?", id, a.DB.Project).Order("id ASC").Scan(r.Context())
 	if err != nil {
@@ -249,11 +288,18 @@ func (a *API) getThreadMessages(w http.ResponseWriter, r *http.Request) {
 	for i := range msgs {
 		out = append(out, messageToJSON(&msgs[i]))
 	}
-	a.json(w, http.StatusOK, map[string]any{
-		"messages":    out,
-		"row_count":   len(out),
-		"total_count": len(out),
-	})
+	resp := map[string]any{
+		"messages":         out,
+		"row_count":        len(out),
+		"total_count":      len(out),
+		"thread_created_at": ts(s.CreatedAt),
+	}
+	if s.UserID != nil {
+		resp["user_id"] = *s.UserID
+	} else {
+		resp["user_id"] = nil
+	}
+	a.json(w, http.StatusOK, resp)
 }
 
 func (a *API) addThreadMessages(w http.ResponseWriter, r *http.Request) {
@@ -267,7 +313,7 @@ func (a *API) addThreadMessagesBatch(w http.ResponseWriter, r *http.Request) {
 func (a *API) addThreadMessagesInner(w http.ResponseWriter, r *http.Request, _ bool) {
 	tid := chi.URLParam(r, "threadId")
 	var body struct {
-		Messages    []struct {
+		Messages []struct {
 			Content  string         `json:"content"`
 			Role     string         `json:"role"`
 			Metadata map[string]any `json:"metadata"`
@@ -285,6 +331,19 @@ func (a *API) addThreadMessagesInner(w http.ResponseWriter, r *http.Request, _ b
 		a.err(w, http.StatusNotFound, "thread not found")
 		return
 	}
+
+	// Create a task to track async graph processing
+	taskID := uuid.NewString()
+	task := &store.TaskRecord{
+		TaskID:      taskID,
+		Status:      "processing",
+		Progress:    0,
+		ProjectUUID: a.DB.Project,
+		CreatedAt:   a.now(),
+		UpdatedAt:   a.now(),
+	}
+	_, _ = a.DB.NewInsert().Model(task).Exec(r.Context())
+
 	var uuids []string
 	gmsgs := make([]graphiti.GMessage, 0, len(body.Messages))
 	for _, m := range body.Messages {
@@ -316,8 +375,19 @@ func (a *API) addThreadMessagesInner(w http.ResponseWriter, r *http.Request, _ b
 		uuids = append(uuids, mid)
 		gmsgs = append(gmsgs, graphitiMessageFromStore(msg))
 	}
-	_ = a.G.AddMessages(r.Context(), tid, gmsgs)
-	resp := map[string]any{"message_uuids": uuids}
+
+	// AddMessages queues to graphiti async worker (returns 202 when accepted)
+	addErr := a.G.AddMessages(r.Context(), tid, gmsgs)
+	taskStatus := "completed"
+	if addErr != nil {
+		taskStatus = "failed"
+	}
+	_, _ = a.DB.NewUpdate().Model(&store.TaskRecord{}).
+		Set("status = ?, progress = ?, updated_at = ?", taskStatus, 1.0, time.Now().UTC()).
+		Where("task_id = ?", taskID).
+		Exec(r.Context())
+
+	resp := map[string]any{"message_uuids": uuids, "task_id": taskID}
 	if body.ReturnContext != nil && *body.ReturnContext {
 		mem, err := a.G.GetMemory(r.Context(), graphiti.GetMemoryRequest{
 			GroupID:  tid,
@@ -356,7 +426,7 @@ func (a *API) getThreadContext(w http.ResponseWriter, r *http.Request) {
 	for _, f := range mem.Facts {
 		ctx += f.Fact + "\n"
 	}
-	a.json(w, http.StatusOK, map[string]any{"context": ctx, "facts": mem.Facts})
+	a.json(w, http.StatusOK, map[string]any{"context": ctx})
 }
 
 func (a *API) patchMessage(w http.ResponseWriter, r *http.Request) {
@@ -400,18 +470,51 @@ func (a *API) now() time.Time {
 	return time.Now().UTC()
 }
 
-func userToJSON(u *store.User) map[string]any {
-	return map[string]any{
-		"user_id":      u.UserID,
-		"email":        u.Email,
-		"first_name":   u.FirstName,
-		"last_name":    u.LastName,
-		"metadata":     u.Metadata,
-		"project_uuid": u.ProjectUUID.String(),
-		"created_at":   ts(u.CreatedAt),
-		"updated_at":   ts(u.UpdatedAt),
-		"uuid":         u.UUID.String(),
+// bulkSessionCounts returns a map of user_id → session count for the given user IDs.
+func (a *API) bulkSessionCounts(ctx context.Context, userIDs []string) map[string]int {
+	if len(userIDs) == 0 {
+		return map[string]int{}
 	}
+	type row struct {
+		UserID string `bun:"user_id"`
+		Count  int    `bun:"count"`
+	}
+	var rows []row
+	_ = a.DB.NewSelect().
+		TableExpr("sessions").
+		ColumnExpr("user_id, COUNT(*) AS count").
+		Where("user_id IN (?)", bun.In(userIDs)).
+		Where("project_uuid = ?", a.DB.Project).
+		GroupExpr("user_id").
+		Scan(ctx, &rows)
+	m := make(map[string]int, len(rows))
+	for _, r := range rows {
+		m[r.UserID] = r.Count
+	}
+	return m
+}
+
+func userToJSON(u *store.User, sessionCount int) map[string]any {
+	m := map[string]any{
+		"user_id":                  u.UserID,
+		"email":                    u.Email,
+		"first_name":               u.FirstName,
+		"last_name":                u.LastName,
+		"metadata":                 u.Metadata,
+		"project_uuid":             u.ProjectUUID.String(),
+		"created_at":               ts(u.CreatedAt),
+		"updated_at":               ts(u.UpdatedAt),
+		"uuid":                     u.UUID.String(),
+		"id":                       u.ID,
+		"session_count":            sessionCount,
+		"disable_default_ontology": u.DisableDefaultOntology,
+	}
+	if !u.DeletedAt.IsZero() {
+		m["deleted_at"] = ts(u.DeletedAt.Time)
+	} else {
+		m["deleted_at"] = nil
+	}
+	return m
 }
 
 func threadToJSON(s *store.Session, proj uuid.UUID) map[string]any {
@@ -428,10 +531,16 @@ func threadToJSON(s *store.Session, proj uuid.UUID) map[string]any {
 }
 
 func messageToJSON(m *store.Message) map[string]any {
+	// role is the Zep role type enum (user/assistant/system/tool/function).
+	// We store the normalized enum in role_type; use it as role for Zep compatibility.
+	role := m.RoleType
+	if role == "" || role == "norole" {
+		role = m.Role
+	}
 	return map[string]any{
 		"uuid":       m.UUID.String(),
 		"content":    m.Content,
-		"role":       m.Role,
+		"role":       role,
 		"role_type":  m.RoleType,
 		"metadata":   m.Metadata,
 		"name":       m.Name,

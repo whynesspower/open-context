@@ -23,6 +23,9 @@ class FactResult(BaseModel):
     expired_at: datetime | None
     source_node_uuid: str | None = None
     target_node_uuid: str | None = None
+    score: float | None = None
+    relevance: float | None = None
+    attributes: dict | None = None
 
     class Config:
         json_encoders = {datetime: lambda v: v.astimezone(timezone.utc).isoformat()}
@@ -36,7 +39,7 @@ class GetMemoryRequest(BaseModel):
     group_id: str = Field(..., description='The group id of the memory to get')
     max_facts: int = Field(default=10, description='The maximum number of facts to retrieve')
     center_node_uuid: str | None = Field(
-        ..., description='The uuid of the node to center the retrieval on'
+        default=None, description='The uuid of the node to center the retrieval on'
     )
     messages: list[Message] = Field(
         ..., description='The messages to build the retrieval query from '
@@ -54,6 +57,9 @@ class NodeResult(BaseModel):
     labels: list[str] | None = None
     group_id: str | None = None
     created_at: datetime | None = None
+    score: float | None = None
+    relevance: float | None = None
+    attributes: dict | None = None
 
     class Config:
         json_encoders = {datetime: lambda v: v.astimezone(timezone.utc).isoformat()}

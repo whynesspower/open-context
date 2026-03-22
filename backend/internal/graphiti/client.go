@@ -81,15 +81,18 @@ type SearchQuery struct {
 }
 
 type FactResult struct {
-	UUID           string  `json:"uuid"`
-	Name           string  `json:"name"`
-	Fact           string  `json:"fact"`
-	ValidAt        *string `json:"valid_at"`
-	InvalidAt      *string `json:"invalid_at"`
-	CreatedAt      string  `json:"created_at"`
-	ExpiredAt      *string `json:"expired_at"`
-	SourceNodeUUID string  `json:"source_node_uuid"`
-	TargetNodeUUID string  `json:"target_node_uuid"`
+	UUID           string         `json:"uuid"`
+	Name           string         `json:"name"`
+	Fact           string         `json:"fact"`
+	ValidAt        *string        `json:"valid_at"`
+	InvalidAt      *string        `json:"invalid_at"`
+	CreatedAt      string         `json:"created_at"`
+	ExpiredAt      *string        `json:"expired_at"`
+	SourceNodeUUID string         `json:"source_node_uuid"`
+	TargetNodeUUID string         `json:"target_node_uuid"`
+	Score          *float64       `json:"score"`
+	Relevance      *float64       `json:"relevance"`
+	Attributes     map[string]any `json:"attributes"`
 }
 
 type SearchResults struct {
@@ -99,7 +102,7 @@ type SearchResults struct {
 type GetMemoryRequest struct {
 	GroupID        string     `json:"group_id"`
 	MaxFacts       int        `json:"max_facts"`
-	CenterNodeUUID *string    `json:"center_node_uuid,omitempty"`
+	CenterNodeUUID *string    `json:"center_node_uuid"`
 	Messages       []GMessage `json:"messages"`
 }
 
