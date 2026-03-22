@@ -314,7 +314,21 @@ func (a *API) getNode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) patchNode(w http.ResponseWriter, r *http.Request) {
-	a.getNode(w, r)
+	id := chi.URLParam(r, "nodeUuid")
+	var body map[string]any
+	if err := a.readJSON(r, &body); err != nil {
+		a.err(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	n, err := a.G.UpdateNode(r.Context(), id, body)
+	if err != nil {
+		a.err(w, http.StatusNotFound, "not found")
+		return
+	}
+	a.json(w, http.StatusOK, map[string]any{
+		"uuid": n.UUID, "name": n.Name, "summary": n.Summary,
+		"labels": n.Labels, "created_at": n.CreatedAt,
+	})
 }
 
 func (a *API) deleteNode(w http.ResponseWriter, r *http.Request) {

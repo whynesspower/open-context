@@ -40,6 +40,33 @@ async def get_entity_edge(uuid: str, graphiti: ZepGraphitiDep):
     return get_fact_result_from_edge(entity_edge)
 
 
+@router.patch('/node/{uuid}', status_code=status.HTTP_200_OK)
+async def update_node(uuid: str, request: dict, graphiti: ZepGraphitiDep):
+    from graphiti_core.errors import NodeNotFoundError
+
+    try:
+        node = await EntityNode.get_by_uuid(graphiti.driver, uuid)
+    except NodeNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    if 'name' in request:
+        node.name = request['name']
+        await node.generate_name_embedding(graphiti.embedder)
+    if 'summary' in request:
+        node.summary = request['summary']
+    if 'labels' in request:
+        node.labels = request['labels']
+    await node.save(graphiti.driver)
+    labels = list(node.labels) if node.labels else None
+    return NodeResult(
+        uuid=node.uuid,
+        name=node.name,
+        summary=node.summary or '',
+        labels=labels,
+        group_id=node.group_id,
+        created_at=node.created_at,
+    )
+
+
 @router.patch('/entity-edge/{uuid}', status_code=status.HTTP_200_OK)
 async def update_entity_edge(uuid: str, request: dict, graphiti: ZepGraphitiDep):
     edge = await graphiti.get_entity_edge(uuid)
