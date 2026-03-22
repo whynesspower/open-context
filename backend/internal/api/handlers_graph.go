@@ -257,7 +257,64 @@ func (a *API) graphClone(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) graphPatterns(w http.ResponseWriter, r *http.Request) {
-	a.json(w, http.StatusOK, map[string]any{"patterns": []any{}})
+	var body map[string]any
+	if err := a.readJSON(r, &body); err != nil {
+		a.err(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	graphID := firstString(body["graph_id"], body["user_id"])
+	if graphID == "" {
+		a.err(w, http.StatusBadRequest, "graph_id or user_id required")
+		return
+	}
+
+	nodes, _ := a.G.ListNodes(r.Context(), graphID, 500)
+	edges, _ := a.G.ListEdges(r.Context(), graphID, 500)
+
+	labelCounts := map[string]int{}
+	for _, n := range nodes {
+		for _, l := range n.Labels {
+			labelCounts[l]++
+		}
+	}
+	edgeNameCounts := map[string]int{}
+	nodeDegree := map[string]int{}
+	for _, e := range edges {
+		edgeNameCounts[e.Name]++
+		nodeDegree[e.SourceNodeUUID]++
+		nodeDegree[e.TargetNodeUUID]++
+	}
+
+	topLabels := make([]map[string]any, 0)
+	for label, count := range labelCounts {
+		topLabels = append(topLabels, map[string]any{"label": label, "count": count})
+	}
+	topEdgeNames := make([]map[string]any, 0)
+	for name, count := range edgeNameCounts {
+		topEdgeNames = append(topEdgeNames, map[string]any{"name": name, "count": count})
+	}
+
+	var maxDegreeNode string
+	maxDegree := 0
+	for nodeUUID, deg := range nodeDegree {
+		if deg > maxDegree {
+			maxDegree = deg
+			maxDegreeNode = nodeUUID
+		}
+	}
+
+	patterns := []map[string]any{
+		{"type": "summary", "total_nodes": len(nodes), "total_edges": len(edges)},
+		{"type": "label_distribution", "labels": topLabels},
+		{"type": "edge_name_distribution", "edge_names": topEdgeNames},
+	}
+	if maxDegreeNode != "" {
+		patterns = append(patterns, map[string]any{
+			"type": "highest_degree_node", "node_uuid": maxDegreeNode, "degree": maxDegree,
+		})
+	}
+
+	a.json(w, http.StatusOK, map[string]any{"patterns": patterns})
 }
 
 func (a *API) postNodesByGraph(w http.ResponseWriter, r *http.Request) {
