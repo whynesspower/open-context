@@ -209,7 +209,51 @@ func (a *API) graphAddFactTriple(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) graphClone(w http.ResponseWriter, r *http.Request) {
-	a.json(w, http.StatusOK, map[string]any{"message": "cloned"})
+	var body map[string]any
+	if err := a.readJSON(r, &body); err != nil {
+		a.err(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	srcGraphID, _ := body["source_graph_id"].(string)
+	dstGraphID, _ := body["new_graph_id"].(string)
+	if srcGraphID == "" {
+		a.err(w, http.StatusBadRequest, "source_graph_id required")
+		return
+	}
+	if dstGraphID == "" {
+		dstGraphID = uuid.NewString()
+	}
+
+	var srcGraph store.GraphRecord
+	if err := a.DB.NewSelect().Model(&srcGraph).Where("graph_id = ? AND project_uuid = ?", srcGraphID, a.DB.Project).Scan(r.Context()); err != nil {
+		a.err(w, http.StatusNotFound, "source graph not found")
+		return
+	}
+
+	newRec := &store.GraphRecord{
+		GraphID:     dstGraphID,
+		ProjectUUID: a.DB.Project,
+		Metadata:    srcGraph.Metadata,
+		UserID:      srcGraph.UserID,
+	}
+	if _, err := a.DB.NewInsert().Model(newRec).Exec(r.Context()); err != nil {
+		a.err(w, http.StatusBadRequest, "target graph already exists")
+		return
+	}
+
+	nodes, _ := a.G.ListNodes(r.Context(), srcGraphID, 500)
+	for _, n := range nodes {
+		_ = a.G.AddEntityNode(r.Context(), graphiti.AddEntityNodeRequest{
+			UUID: uuid.NewString(), GroupID: dstGraphID, Name: n.Name, Summary: n.Summary,
+		})
+	}
+
+	a.json(w, http.StatusOK, map[string]any{
+		"message":         "cloned",
+		"source_graph_id": srcGraphID,
+		"new_graph_id":    dstGraphID,
+		"nodes_cloned":    len(nodes),
+	})
 }
 
 func (a *API) graphPatterns(w http.ResponseWriter, r *http.Request) {
