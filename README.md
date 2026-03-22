@@ -52,3 +52,8 @@ Use **angular-style**, **lowercase** messages, one small logical change per comm
 
 - API path remains `/api/v2` to match the official SDKs (SDK major version ≠ URL version).
 - Legacy Zep CE (`zep/legacy`) is a **reference** for patterns only; feature coverage is driven by the current SDK surface.
+- This monorepo vendors `graphiti/` and `sdks/zep-python/` **without nested `.git/` metadata** so everything can be tracked in one repository. If you re-copy those trees from upstream, remove their inner `.git` (or use submodules) before committing.
+
+## implementation status
+
+The Go `/api/v2` surface is implemented to be **SDK-compatible** for common flows (users, threads/messages, graph search, nodes/edges listing, episodes proxy, templates, instructions, entity types). Some advanced graph operations are **stubs** or best-effort compared to hosted Zep Cloud; tighten them incrementally against the official SDK contract.
