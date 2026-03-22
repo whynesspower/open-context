@@ -302,7 +302,15 @@ func (a *API) postEdgesByUser(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) getNode(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "nodeUuid")
-	a.json(w, http.StatusOK, map[string]any{"uuid": id, "name": "", "summary": "", "labels": []any{}, "created_at": ts(a.now())})
+	n, err := a.G.GetNode(r.Context(), id)
+	if err != nil {
+		a.err(w, http.StatusNotFound, "not found")
+		return
+	}
+	a.json(w, http.StatusOK, map[string]any{
+		"uuid": n.UUID, "name": n.Name, "summary": n.Summary,
+		"labels": n.Labels, "created_at": n.CreatedAt,
+	})
 }
 
 func (a *API) patchNode(w http.ResponseWriter, r *http.Request) {

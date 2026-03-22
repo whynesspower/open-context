@@ -202,6 +202,18 @@ func (c *Client) AddEntityNode(ctx context.Context, req AddEntityNodeRequest) er
 	return nil
 }
 
+func (c *Client) GetNode(ctx context.Context, uuid string) (*GraphitiNode, error) {
+	var out GraphitiNode
+	st, err := c.do(ctx, http.MethodGet, "node/"+uuid, nil, &out)
+	if err != nil {
+		return nil, err
+	}
+	if st != http.StatusOK {
+		return nil, fmt.Errorf("graphiti get node: status %d", st)
+	}
+	return &out, nil
+}
+
 func (c *Client) GetEntityEdge(ctx context.Context, uuid string) (*FactResult, error) {
 	var out FactResult
 	st, err := c.do(ctx, http.MethodGet, "entity-edge/"+uuid, nil, &out)

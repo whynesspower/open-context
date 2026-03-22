@@ -5,6 +5,8 @@ from fastapi import APIRouter, status
 from graphiti_core.edges import EntityEdge  # type: ignore
 from graphiti_core.nodes import EntityNode  # type: ignore
 
+from fastapi import HTTPException
+
 from graph_service.dto import (
     EdgeResult,
     GetMemoryRequest,
@@ -77,6 +79,25 @@ def compose_query_from_messages(messages: list[Message]):
     for message in messages:
         combined_query += f'{message.role_type or ""}({message.role or ""}): {message.content}\n'
     return combined_query
+
+
+@router.get('/node/{uuid}', status_code=status.HTTP_200_OK)
+async def get_node(uuid: str, graphiti: ZepGraphitiDep):
+    from graphiti_core.errors import NodeNotFoundError
+
+    try:
+        node = await EntityNode.get_by_uuid(graphiti.driver, uuid)
+    except NodeNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    labels = list(node.labels) if node.labels else None
+    return NodeResult(
+        uuid=node.uuid,
+        name=node.name,
+        summary=node.summary or '',
+        labels=labels,
+        group_id=node.group_id,
+        created_at=node.created_at,
+    )
 
 
 @router.get('/nodes/{group_id}', status_code=status.HTTP_200_OK)
