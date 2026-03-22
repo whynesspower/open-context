@@ -152,7 +152,25 @@ func (a *API) graphAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) graphAddBatch(w http.ResponseWriter, r *http.Request) {
-	a.json(w, http.StatusOK, []any{})
+	var items []map[string]any
+	if err := a.readJSON(r, &items); err != nil {
+		a.err(w, http.StatusBadRequest, "invalid body: expected array")
+		return
+	}
+	results := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		group := firstString(item["graph_id"], item["user_id"])
+		if group == "" {
+			results = append(results, map[string]any{"error": "graph_id or user_id required"})
+			continue
+		}
+		data, _ := item["data"].(string)
+		typ, _ := item["type"].(string)
+		gm := graphiti.GMessage{Content: data, RoleType: "user", Role: typ, UUID: uuid.NewString()}
+		_ = a.G.AddMessages(r.Context(), group, []graphiti.GMessage{gm})
+		results = append(results, map[string]any{"uuid": gm.UUID, "content": data, "type": typ})
+	}
+	a.json(w, http.StatusOK, results)
 }
 
 func (a *API) graphAddFactTriple(w http.ResponseWriter, r *http.Request) {
