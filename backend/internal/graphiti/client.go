@@ -316,6 +316,27 @@ func (c *Client) DeleteGroup(ctx context.Context, groupID string) error {
 	return nil
 }
 
+func (c *Client) GetEpisode(ctx context.Context, uuid string) (json.RawMessage, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("%s/episode/%s", c.BaseURL, uuid), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("graphiti get episode: status %d %s", resp.StatusCode, string(raw))
+	}
+	return json.RawMessage(raw), nil
+}
+
 func (c *Client) DeleteEpisode(ctx context.Context, uuid string) error {
 	st, err := c.do(ctx, http.MethodDelete, "episode/"+uuid, nil, nil)
 	if err != nil {

@@ -78,6 +78,26 @@ async def update_entity_edge(uuid: str, request: dict, graphiti: ZepGraphitiDep)
     return get_fact_result_from_edge(edge)
 
 
+@router.get('/episode/{uuid}', status_code=status.HTTP_200_OK)
+async def get_episode_by_uuid(uuid: str, graphiti: ZepGraphitiDep):
+    from graphiti_core.errors import NodeNotFoundError
+    from graphiti_core.nodes import EpisodicNode
+
+    try:
+        episode = await EpisodicNode.get_by_uuid(graphiti.driver, uuid)
+    except NodeNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return {
+        'uuid': episode.uuid,
+        'name': episode.name,
+        'group_id': episode.group_id,
+        'source': episode.source.value if episode.source else '',
+        'source_description': episode.source_description,
+        'content': episode.content,
+        'created_at': episode.created_at.isoformat() if episode.created_at else None,
+    }
+
+
 @router.get('/episodes/{group_id}', status_code=status.HTTP_200_OK)
 async def get_episodes(group_id: str, last_n: int, graphiti: ZepGraphitiDep):
     episodes = await graphiti.retrieve_episodes(
