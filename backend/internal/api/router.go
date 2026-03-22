@@ -68,7 +68,7 @@ func (a *API) Handler() http.Handler {
 
 		r.Post("/graph/search", a.graphSearch)
 		r.Post("/graph/create", a.graphCreate)
-		r.Post("/graph/list-all", a.graphListAll)
+		r.Get("/graph/list-all", a.graphListAll)
 		r.Get("/graph/{graphId}", a.graphGet)
 		r.Patch("/graph/{graphId}", a.graphPatch)
 		r.Delete("/graph/{graphId}", a.graphDelete)
@@ -95,6 +95,7 @@ func (a *API) Handler() http.Handler {
 		r.Get("/graph/episodes/graph/{graphId}", a.getEpisodesByGraph)
 		r.Get("/graph/episodes/user/{userId}", a.getEpisodesByUser)
 		r.Get("/graph/episodes/{episodeUuid}", a.getEpisode)
+		r.Get("/graph/episodes/{episodeUuid}/mentions", a.getEpisodeMentions)
 		r.Delete("/graph/episodes/{episodeUuid}", a.deleteEpisode)
 	})
 

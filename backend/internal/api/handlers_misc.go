@@ -6,6 +6,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/opencontext/backend/internal/store"
+	"github.com/uptrace/bun"
 )
 
 func (a *API) projectInfo(w http.ResponseWriter, r *http.Request) {
@@ -21,7 +22,7 @@ func (a *API) getTask(w http.ResponseWriter, r *http.Request) {
 	var t store.TaskRecord
 	err := a.DB.NewSelect().Model(&t).Where("task_id = ? AND project_uuid = ?", id, a.DB.Project).Scan(r.Context())
 	if err != nil {
-		a.json(w, http.StatusOK, map[string]any{"task_id": id, "status": "completed", "progress": 1.0})
+		a.err(w, http.StatusNotFound, "task not found")
 		return
 	}
 	a.json(w, http.StatusOK, map[string]any{"task_id": t.TaskID, "status": t.Status, "progress": t.Progress, "error": t.Error})
@@ -150,7 +151,15 @@ func (a *API) addCustomInstructions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) deleteCustomInstructions(w http.ResponseWriter, r *http.Request) {
-	_, _ = a.DB.NewDelete().Model((*store.CustomInstructionRow)(nil)).Where("project_uuid = ?", a.DB.Project).Exec(r.Context())
+	var body struct {
+		InstructionNames []string `json:"instruction_names"`
+	}
+	_ = a.readJSON(r, &body)
+	q := a.DB.NewDelete().Model((*store.CustomInstructionRow)(nil)).Where("project_uuid = ?", a.DB.Project)
+	if len(body.InstructionNames) > 0 {
+		q = q.Where("name IN (?)", bun.In(body.InstructionNames))
+	}
+	_, _ = q.Exec(r.Context())
 	a.json(w, http.StatusOK, map[string]any{"message": "ok"})
 }
 
@@ -183,7 +192,15 @@ func (a *API) addUserSummaryInstructions(w http.ResponseWriter, r *http.Request)
 }
 
 func (a *API) deleteUserSummaryInstructions(w http.ResponseWriter, r *http.Request) {
-	_, _ = a.DB.NewDelete().Model((*store.UserSummaryInstructionRow)(nil)).Where("project_uuid = ?", a.DB.Project).Exec(r.Context())
+	var body struct {
+		InstructionNames []string `json:"instruction_names"`
+	}
+	_ = a.readJSON(r, &body)
+	q := a.DB.NewDelete().Model((*store.UserSummaryInstructionRow)(nil)).Where("project_uuid = ?", a.DB.Project)
+	if len(body.InstructionNames) > 0 {
+		q = q.Where("name IN (?)", bun.In(body.InstructionNames))
+	}
+	_, _ = q.Exec(r.Context())
 	a.json(w, http.StatusOK, map[string]any{"message": "ok"})
 }
 

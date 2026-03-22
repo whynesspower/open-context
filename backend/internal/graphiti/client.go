@@ -81,13 +81,15 @@ type SearchQuery struct {
 }
 
 type FactResult struct {
-	UUID       string  `json:"uuid"`
-	Name       string  `json:"name"`
-	Fact       string  `json:"fact"`
-	ValidAt    *string `json:"valid_at"`
-	InvalidAt  *string `json:"invalid_at"`
-	CreatedAt  string  `json:"created_at"`
-	ExpiredAt  *string `json:"expired_at"`
+	UUID           string  `json:"uuid"`
+	Name           string  `json:"name"`
+	Fact           string  `json:"fact"`
+	ValidAt        *string `json:"valid_at"`
+	InvalidAt      *string `json:"invalid_at"`
+	CreatedAt      string  `json:"created_at"`
+	ExpiredAt      *string `json:"expired_at"`
+	SourceNodeUUID string  `json:"source_node_uuid"`
+	TargetNodeUUID string  `json:"target_node_uuid"`
 }
 
 type SearchResults struct {
@@ -169,6 +171,26 @@ func (c *Client) GetMemory(ctx context.Context, req GetMemoryRequest) (*GetMemor
 	return &out, nil
 }
 
+type AddFactTripleRequest struct {
+	Subject  string `json:"subject"`
+	Predicate string `json:"predicate"`
+	Object   string `json:"object"`
+	GroupID  string `json:"group_id"`
+	Fact     string `json:"fact,omitempty"`
+}
+
+func (c *Client) AddFactTriple(ctx context.Context, req AddFactTripleRequest) (*FactResult, error) {
+	var out FactResult
+	st, err := c.do(ctx, http.MethodPost, "add-fact-triple", req, &out)
+	if err != nil {
+		return nil, err
+	}
+	if st != http.StatusCreated && st != http.StatusOK {
+		return nil, fmt.Errorf("graphiti add-fact-triple: status %d", st)
+	}
+	return &out, nil
+}
+
 func (c *Client) AddEntityNode(ctx context.Context, req AddEntityNodeRequest) error {
 	st, err := c.do(ctx, http.MethodPost, "entity-node", req, nil)
 	if err != nil {
@@ -180,6 +202,63 @@ func (c *Client) AddEntityNode(ctx context.Context, req AddEntityNodeRequest) er
 	return nil
 }
 
+func (c *Client) GetNode(ctx context.Context, uuid string) (*GraphitiNode, error) {
+	var out GraphitiNode
+	st, err := c.do(ctx, http.MethodGet, "node/"+uuid, nil, &out)
+	if err != nil {
+		return nil, err
+	}
+	if st != http.StatusOK {
+		return nil, fmt.Errorf("graphiti get node: status %d", st)
+	}
+	return &out, nil
+}
+
+func (c *Client) GetNodeEpisodes(ctx context.Context, uuid string) (json.RawMessage, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("%s/node/%s/episodes", c.BaseURL, uuid), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("graphiti node episodes: status %d %s", resp.StatusCode, string(raw))
+	}
+	return json.RawMessage(raw), nil
+}
+
+func (c *Client) GetNodeEdges(ctx context.Context, uuid string) ([]GraphitiEdge, error) {
+	var out []GraphitiEdge
+	st, err := c.do(ctx, http.MethodGet, "node/"+uuid+"/edges", nil, &out)
+	if err != nil {
+		return nil, err
+	}
+	if st != http.StatusOK {
+		return nil, fmt.Errorf("graphiti node edges: status %d", st)
+	}
+	return out, nil
+}
+
+func (c *Client) UpdateNode(ctx context.Context, uuid string, body map[string]any) (*GraphitiNode, error) {
+	var out GraphitiNode
+	st, err := c.do(ctx, http.MethodPatch, "node/"+uuid, body, &out)
+	if err != nil {
+		return nil, err
+	}
+	if st != http.StatusOK {
+		return nil, fmt.Errorf("graphiti update node: status %d", st)
+	}
+	return &out, nil
+}
+
 func (c *Client) GetEntityEdge(ctx context.Context, uuid string) (*FactResult, error) {
 	var out FactResult
 	st, err := c.do(ctx, http.MethodGet, "entity-edge/"+uuid, nil, &out)
@@ -188,6 +267,29 @@ func (c *Client) GetEntityEdge(ctx context.Context, uuid string) (*FactResult, e
 	}
 	if st != http.StatusOK {
 		return nil, fmt.Errorf("graphiti entity-edge: status %d", st)
+	}
+	return &out, nil
+}
+
+func (c *Client) DeleteNode(ctx context.Context, uuid string) error {
+	st, err := c.do(ctx, http.MethodDelete, "node/"+uuid, nil, nil)
+	if err != nil {
+		return err
+	}
+	if st != http.StatusOK && st != http.StatusNoContent {
+		return fmt.Errorf("graphiti delete node: status %d", st)
+	}
+	return nil
+}
+
+func (c *Client) UpdateEntityEdge(ctx context.Context, uuid string, body map[string]any) (*FactResult, error) {
+	var out FactResult
+	st, err := c.do(ctx, http.MethodPatch, "entity-edge/"+uuid, body, &out)
+	if err != nil {
+		return nil, err
+	}
+	if st != http.StatusOK {
+		return nil, fmt.Errorf("graphiti update edge: status %d", st)
 	}
 	return &out, nil
 }
@@ -212,6 +314,48 @@ func (c *Client) DeleteGroup(ctx context.Context, groupID string) error {
 		return fmt.Errorf("graphiti delete group: status %d", st)
 	}
 	return nil
+}
+
+func (c *Client) GetEpisodeMentions(ctx context.Context, uuid string) (json.RawMessage, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("%s/episode/%s/mentions", c.BaseURL, uuid), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("graphiti episode mentions: status %d %s", resp.StatusCode, string(raw))
+	}
+	return json.RawMessage(raw), nil
+}
+
+func (c *Client) GetEpisode(ctx context.Context, uuid string) (json.RawMessage, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("%s/episode/%s", c.BaseURL, uuid), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("graphiti get episode: status %d %s", resp.StatusCode, string(raw))
+	}
+	return json.RawMessage(raw), nil
 }
 
 func (c *Client) DeleteEpisode(ctx context.Context, uuid string) error {

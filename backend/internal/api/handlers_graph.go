@@ -51,7 +51,7 @@ func factToEdge(f graphiti.FactResult) map[string]any {
 	return map[string]any{
 		"uuid": f.UUID, "name": f.Name, "fact": f.Fact,
 		"created_at": f.CreatedAt, "valid_at": f.ValidAt, "invalid_at": f.InvalidAt, "expired_at": f.ExpiredAt,
-		"source_node_uuid": "", "target_node_uuid": "",
+		"source_node_uuid": f.SourceNodeUUID, "target_node_uuid": f.TargetNodeUUID,
 	}
 }
 
@@ -152,19 +152,169 @@ func (a *API) graphAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) graphAddBatch(w http.ResponseWriter, r *http.Request) {
-	a.json(w, http.StatusOK, []any{})
+	var items []map[string]any
+	if err := a.readJSON(r, &items); err != nil {
+		a.err(w, http.StatusBadRequest, "invalid body: expected array")
+		return
+	}
+	results := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		group := firstString(item["graph_id"], item["user_id"])
+		if group == "" {
+			results = append(results, map[string]any{"error": "graph_id or user_id required"})
+			continue
+		}
+		data, _ := item["data"].(string)
+		typ, _ := item["type"].(string)
+		gm := graphiti.GMessage{Content: data, RoleType: "user", Role: typ, UUID: uuid.NewString()}
+		_ = a.G.AddMessages(r.Context(), group, []graphiti.GMessage{gm})
+		results = append(results, map[string]any{"uuid": gm.UUID, "content": data, "type": typ})
+	}
+	a.json(w, http.StatusOK, results)
 }
 
 func (a *API) graphAddFactTriple(w http.ResponseWriter, r *http.Request) {
-	a.json(w, http.StatusOK, map[string]any{"uuid": uuid.NewString(), "message": "queued"})
+	var body struct {
+		Subject   string `json:"subject_node_name"`
+		Predicate string `json:"predicate_name"`
+		Object    string `json:"object_node_name"`
+		GraphID   string `json:"graph_id"`
+		UserID    string `json:"user_id"`
+		Fact      string `json:"fact"`
+	}
+	if err := a.readJSON(r, &body); err != nil {
+		a.err(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	group := body.GraphID
+	if group == "" {
+		group = body.UserID
+	}
+	if group == "" || body.Subject == "" || body.Predicate == "" || body.Object == "" {
+		a.err(w, http.StatusBadRequest, "subject_node_name, predicate_name, object_node_name, and graph_id or user_id required")
+		return
+	}
+	result, err := a.G.AddFactTriple(r.Context(), graphiti.AddFactTripleRequest{
+		Subject:   body.Subject,
+		Predicate: body.Predicate,
+		Object:    body.Object,
+		GroupID:   group,
+		Fact:      body.Fact,
+	})
+	if err != nil {
+		a.err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.json(w, http.StatusOK, factToEdge(*result))
 }
 
 func (a *API) graphClone(w http.ResponseWriter, r *http.Request) {
-	a.json(w, http.StatusOK, map[string]any{"message": "cloned"})
+	var body map[string]any
+	if err := a.readJSON(r, &body); err != nil {
+		a.err(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	srcGraphID, _ := body["source_graph_id"].(string)
+	dstGraphID, _ := body["new_graph_id"].(string)
+	if srcGraphID == "" {
+		a.err(w, http.StatusBadRequest, "source_graph_id required")
+		return
+	}
+	if dstGraphID == "" {
+		dstGraphID = uuid.NewString()
+	}
+
+	var srcGraph store.GraphRecord
+	if err := a.DB.NewSelect().Model(&srcGraph).Where("graph_id = ? AND project_uuid = ?", srcGraphID, a.DB.Project).Scan(r.Context()); err != nil {
+		a.err(w, http.StatusNotFound, "source graph not found")
+		return
+	}
+
+	newRec := &store.GraphRecord{
+		GraphID:     dstGraphID,
+		ProjectUUID: a.DB.Project,
+		Metadata:    srcGraph.Metadata,
+		UserID:      srcGraph.UserID,
+	}
+	if _, err := a.DB.NewInsert().Model(newRec).Exec(r.Context()); err != nil {
+		a.err(w, http.StatusBadRequest, "target graph already exists")
+		return
+	}
+
+	nodes, _ := a.G.ListNodes(r.Context(), srcGraphID, 500)
+	for _, n := range nodes {
+		_ = a.G.AddEntityNode(r.Context(), graphiti.AddEntityNodeRequest{
+			UUID: uuid.NewString(), GroupID: dstGraphID, Name: n.Name, Summary: n.Summary,
+		})
+	}
+
+	a.json(w, http.StatusOK, map[string]any{
+		"message":         "cloned",
+		"source_graph_id": srcGraphID,
+		"new_graph_id":    dstGraphID,
+		"nodes_cloned":    len(nodes),
+	})
 }
 
 func (a *API) graphPatterns(w http.ResponseWriter, r *http.Request) {
-	a.json(w, http.StatusOK, map[string]any{"patterns": []any{}})
+	var body map[string]any
+	if err := a.readJSON(r, &body); err != nil {
+		a.err(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	graphID := firstString(body["graph_id"], body["user_id"])
+	if graphID == "" {
+		a.err(w, http.StatusBadRequest, "graph_id or user_id required")
+		return
+	}
+
+	nodes, _ := a.G.ListNodes(r.Context(), graphID, 500)
+	edges, _ := a.G.ListEdges(r.Context(), graphID, 500)
+
+	labelCounts := map[string]int{}
+	for _, n := range nodes {
+		for _, l := range n.Labels {
+			labelCounts[l]++
+		}
+	}
+	edgeNameCounts := map[string]int{}
+	nodeDegree := map[string]int{}
+	for _, e := range edges {
+		edgeNameCounts[e.Name]++
+		nodeDegree[e.SourceNodeUUID]++
+		nodeDegree[e.TargetNodeUUID]++
+	}
+
+	topLabels := make([]map[string]any, 0)
+	for label, count := range labelCounts {
+		topLabels = append(topLabels, map[string]any{"label": label, "count": count})
+	}
+	topEdgeNames := make([]map[string]any, 0)
+	for name, count := range edgeNameCounts {
+		topEdgeNames = append(topEdgeNames, map[string]any{"name": name, "count": count})
+	}
+
+	var maxDegreeNode string
+	maxDegree := 0
+	for nodeUUID, deg := range nodeDegree {
+		if deg > maxDegree {
+			maxDegree = deg
+			maxDegreeNode = nodeUUID
+		}
+	}
+
+	patterns := []map[string]any{
+		{"type": "summary", "total_nodes": len(nodes), "total_edges": len(edges)},
+		{"type": "label_distribution", "labels": topLabels},
+		{"type": "edge_name_distribution", "edge_names": topEdgeNames},
+	}
+	if maxDegreeNode != "" {
+		patterns = append(patterns, map[string]any{
+			"type": "highest_degree_node", "node_uuid": maxDegreeNode, "degree": maxDegree,
+		})
+	}
+
+	a.json(w, http.StatusOK, map[string]any{"patterns": patterns})
 }
 
 func (a *API) postNodesByGraph(w http.ResponseWriter, r *http.Request) {
@@ -253,23 +403,64 @@ func (a *API) postEdgesByUser(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) getNode(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "nodeUuid")
-	a.json(w, http.StatusOK, map[string]any{"uuid": id, "name": "", "summary": "", "labels": []any{}, "created_at": ts(a.now())})
+	n, err := a.G.GetNode(r.Context(), id)
+	if err != nil {
+		a.err(w, http.StatusNotFound, "not found")
+		return
+	}
+	a.json(w, http.StatusOK, map[string]any{
+		"uuid": n.UUID, "name": n.Name, "summary": n.Summary,
+		"labels": n.Labels, "created_at": n.CreatedAt,
+	})
 }
 
 func (a *API) patchNode(w http.ResponseWriter, r *http.Request) {
-	a.getNode(w, r)
+	id := chi.URLParam(r, "nodeUuid")
+	var body map[string]any
+	if err := a.readJSON(r, &body); err != nil {
+		a.err(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	n, err := a.G.UpdateNode(r.Context(), id, body)
+	if err != nil {
+		a.err(w, http.StatusNotFound, "not found")
+		return
+	}
+	a.json(w, http.StatusOK, map[string]any{
+		"uuid": n.UUID, "name": n.Name, "summary": n.Summary,
+		"labels": n.Labels, "created_at": n.CreatedAt,
+	})
 }
 
 func (a *API) deleteNode(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "nodeUuid")
+	if err := a.G.DeleteNode(r.Context(), id); err != nil {
+		a.err(w, http.StatusNotFound, "not found")
+		return
+	}
 	a.json(w, http.StatusOK, map[string]any{"message": "ok"})
 }
 
 func (a *API) getNodeEdges(w http.ResponseWriter, r *http.Request) {
-	a.json(w, http.StatusOK, []any{})
+	id := chi.URLParam(r, "nodeUuid")
+	edges, err := a.G.GetNodeEdges(r.Context(), id)
+	if err != nil {
+		a.json(w, http.StatusOK, []any{})
+		return
+	}
+	a.json(w, http.StatusOK, edgesToSDK(edges))
 }
 
 func (a *API) getNodeEpisodes(w http.ResponseWriter, r *http.Request) {
-	a.json(w, http.StatusOK, map[string]any{"episodes": []any{}})
+	id := chi.URLParam(r, "nodeUuid")
+	raw, err := a.G.GetNodeEpisodes(r.Context(), id)
+	if err != nil {
+		a.json(w, http.StatusOK, map[string]any{"episodes": []any{}})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
 }
 
 func (a *API) getEdge(w http.ResponseWriter, r *http.Request) {
@@ -281,12 +472,28 @@ func (a *API) getEdge(w http.ResponseWriter, r *http.Request) {
 	}
 	a.json(w, http.StatusOK, map[string]any{
 		"uuid": f.UUID, "name": f.Name, "fact": f.Fact, "created_at": f.CreatedAt,
-		"source_node_uuid": "", "target_node_uuid": "",
+		"valid_at": f.ValidAt, "invalid_at": f.InvalidAt, "expired_at": f.ExpiredAt,
+		"source_node_uuid": f.SourceNodeUUID, "target_node_uuid": f.TargetNodeUUID,
 	})
 }
 
 func (a *API) patchEdge(w http.ResponseWriter, r *http.Request) {
-	a.getEdge(w, r)
+	id := chi.URLParam(r, "edgeUuid")
+	var body map[string]any
+	if err := a.readJSON(r, &body); err != nil {
+		a.err(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	f, err := a.G.UpdateEntityEdge(r.Context(), id, body)
+	if err != nil {
+		a.err(w, http.StatusNotFound, "not found")
+		return
+	}
+	a.json(w, http.StatusOK, map[string]any{
+		"uuid": f.UUID, "name": f.Name, "fact": f.Fact, "created_at": f.CreatedAt,
+		"valid_at": f.ValidAt, "invalid_at": f.InvalidAt, "expired_at": f.ExpiredAt,
+		"source_node_uuid": f.SourceNodeUUID, "target_node_uuid": f.TargetNodeUUID,
+	})
 }
 
 func (a *API) deleteEdge(w http.ResponseWriter, r *http.Request) {
@@ -332,7 +539,27 @@ func (a *API) getEpisodesByUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) getEpisode(w http.ResponseWriter, r *http.Request) {
-	a.json(w, http.StatusOK, map[string]any{"uuid": chi.URLParam(r, "episodeUuid")})
+	id := chi.URLParam(r, "episodeUuid")
+	raw, err := a.G.GetEpisode(r.Context(), id)
+	if err != nil {
+		a.err(w, http.StatusNotFound, "not found")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+}
+
+func (a *API) getEpisodeMentions(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "episodeUuid")
+	raw, err := a.G.GetEpisodeMentions(r.Context(), id)
+	if err != nil {
+		a.json(w, http.StatusOK, map[string]any{"nodes": []any{}, "edges": []any{}})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
 }
 
 func (a *API) deleteEpisode(w http.ResponseWriter, r *http.Request) {

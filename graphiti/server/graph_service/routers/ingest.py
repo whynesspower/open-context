@@ -3,11 +3,11 @@ from contextlib import asynccontextmanager
 from functools import partial
 
 from fastapi import APIRouter, FastAPI, status
-from graphiti_core.nodes import EpisodeType  # type: ignore
+from graphiti_core.nodes import EntityNode, EpisodeType  # type: ignore
 from graphiti_core.utils.maintenance.graph_data_operations import clear_data  # type: ignore
 
-from graph_service.dto import AddEntityNodeRequest, AddMessagesRequest, Message, Result
-from graph_service.zep_graphiti import ZepGraphitiDep
+from graph_service.dto import AddEntityNodeRequest, AddFactTripleRequest, AddMessagesRequest, Message, Result
+from graph_service.zep_graphiti import ZepGraphitiDep, get_fact_result_from_edge
 
 
 class AsyncWorker:
@@ -84,6 +84,20 @@ async def add_entity_node(
     return node
 
 
+@router.delete('/node/{uuid}', status_code=status.HTTP_200_OK)
+async def delete_node(uuid: str, graphiti: ZepGraphitiDep):
+    from graphiti_core.errors import NodeNotFoundError
+
+    try:
+        node = await EntityNode.get_by_uuid(graphiti.driver, uuid)
+        await node.delete(graphiti.driver)
+    except NodeNotFoundError as e:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return Result(message='Node deleted', success=True)
+
+
 @router.delete('/entity-edge/{uuid}', status_code=status.HTTP_200_OK)
 async def delete_entity_edge(uuid: str, graphiti: ZepGraphitiDep):
     await graphiti.delete_entity_edge(uuid)
@@ -100,6 +114,48 @@ async def delete_group(group_id: str, graphiti: ZepGraphitiDep):
 async def delete_episode(uuid: str, graphiti: ZepGraphitiDep):
     await graphiti.delete_episodic_node(uuid)
     return Result(message='Episode deleted', success=True)
+
+
+@router.post('/add-fact-triple', status_code=status.HTTP_201_CREATED)
+async def add_fact_triple(
+    request: AddFactTripleRequest,
+    graphiti: ZepGraphitiDep,
+):
+    from uuid import uuid4
+
+    from graphiti_core.edges import EntityEdge
+    from graphiti_core.utils.datetime_utils import utc_now
+
+    subj_uuid = str(uuid4())
+    obj_uuid = str(uuid4())
+
+    subj_node = await graphiti.save_entity_node(
+        uuid=subj_uuid,
+        group_id=request.group_id,
+        name=request.subject,
+        summary='',
+    )
+    obj_node = await graphiti.save_entity_node(
+        uuid=obj_uuid,
+        group_id=request.group_id,
+        name=request.object,
+        summary='',
+    )
+
+    fact_text = request.fact or f'{request.subject} {request.predicate} {request.object}'
+    edge_uuid = str(uuid4())
+    edge = EntityEdge(
+        uuid=edge_uuid,
+        group_id=request.group_id,
+        source_node_uuid=subj_node.uuid,
+        target_node_uuid=obj_node.uuid,
+        name=request.predicate,
+        fact=fact_text,
+        created_at=utc_now(),
+    )
+    await edge.generate_embedding(graphiti.embedder)
+    await edge.save(graphiti.driver)
+    return get_fact_result_from_edge(edge)
 
 
 @router.post('/clear', status_code=status.HTTP_200_OK)
