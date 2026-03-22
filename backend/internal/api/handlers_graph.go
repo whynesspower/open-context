@@ -281,7 +281,8 @@ func (a *API) getEdge(w http.ResponseWriter, r *http.Request) {
 	}
 	a.json(w, http.StatusOK, map[string]any{
 		"uuid": f.UUID, "name": f.Name, "fact": f.Fact, "created_at": f.CreatedAt,
-		"source_node_uuid": "", "target_node_uuid": "",
+		"valid_at": f.ValidAt, "invalid_at": f.InvalidAt, "expired_at": f.ExpiredAt,
+		"source_node_uuid": f.SourceNodeUUID, "target_node_uuid": f.TargetNodeUUID,
 	})
 }
 
