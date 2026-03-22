@@ -1,0 +1,36 @@
+name: ci
+
+on: [push]
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Set up python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.9
+      - name: Bootstrap poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python - -y --version 1.8.3
+      - name: Install dependencies
+        run: poetry install
+      - name: Compile
+        run: poetry run mypy . --exclude examples
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Set up python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.9
+      - name: Bootstrap poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python - -y --version 1.8.3
+      - name: Install dependencies
+        run: poetry install
+      - name: Test
+        run: poetry run pytest .
