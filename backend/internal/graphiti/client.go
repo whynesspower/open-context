@@ -81,13 +81,15 @@ type SearchQuery struct {
 }
 
 type FactResult struct {
-	UUID       string  `json:"uuid"`
-	Name       string  `json:"name"`
-	Fact       string  `json:"fact"`
-	ValidAt    *string `json:"valid_at"`
-	InvalidAt  *string `json:"invalid_at"`
-	CreatedAt  string  `json:"created_at"`
-	ExpiredAt  *string `json:"expired_at"`
+	UUID           string  `json:"uuid"`
+	Name           string  `json:"name"`
+	Fact           string  `json:"fact"`
+	ValidAt        *string `json:"valid_at"`
+	InvalidAt      *string `json:"invalid_at"`
+	CreatedAt      string  `json:"created_at"`
+	ExpiredAt      *string `json:"expired_at"`
+	SourceNodeUUID string  `json:"source_node_uuid"`
+	TargetNodeUUID string  `json:"target_node_uuid"`
 }
 
 type SearchResults struct {

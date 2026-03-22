@@ -51,7 +51,7 @@ func factToEdge(f graphiti.FactResult) map[string]any {
 	return map[string]any{
 		"uuid": f.UUID, "name": f.Name, "fact": f.Fact,
 		"created_at": f.CreatedAt, "valid_at": f.ValidAt, "invalid_at": f.InvalidAt, "expired_at": f.ExpiredAt,
-		"source_node_uuid": "", "target_node_uuid": "",
+		"source_node_uuid": f.SourceNodeUUID, "target_node_uuid": f.TargetNodeUUID,
 	}
 }
 
