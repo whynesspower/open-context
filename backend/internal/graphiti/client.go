@@ -194,6 +194,18 @@ func (c *Client) GetEntityEdge(ctx context.Context, uuid string) (*FactResult, e
 	return &out, nil
 }
 
+func (c *Client) UpdateEntityEdge(ctx context.Context, uuid string, body map[string]any) (*FactResult, error) {
+	var out FactResult
+	st, err := c.do(ctx, http.MethodPatch, "entity-edge/"+uuid, body, &out)
+	if err != nil {
+		return nil, err
+	}
+	if st != http.StatusOK {
+		return nil, fmt.Errorf("graphiti update edge: status %d", st)
+	}
+	return &out, nil
+}
+
 func (c *Client) DeleteEntityEdge(ctx context.Context, uuid string) error {
 	st, err := c.do(ctx, http.MethodDelete, "entity-edge/"+uuid, nil, nil)
 	if err != nil {

@@ -38,6 +38,17 @@ async def get_entity_edge(uuid: str, graphiti: ZepGraphitiDep):
     return get_fact_result_from_edge(entity_edge)
 
 
+@router.patch('/entity-edge/{uuid}', status_code=status.HTTP_200_OK)
+async def update_entity_edge(uuid: str, request: dict, graphiti: ZepGraphitiDep):
+    edge = await graphiti.get_entity_edge(uuid)
+    if 'fact' in request:
+        edge.fact = request['fact']
+    if 'name' in request:
+        edge.name = request['name']
+    await edge.save(graphiti.driver)
+    return get_fact_result_from_edge(edge)
+
+
 @router.get('/episodes/{group_id}', status_code=status.HTTP_200_OK)
 async def get_episodes(group_id: str, last_n: int, graphiti: ZepGraphitiDep):
     episodes = await graphiti.retrieve_episodes(

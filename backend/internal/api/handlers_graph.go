@@ -287,7 +287,22 @@ func (a *API) getEdge(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) patchEdge(w http.ResponseWriter, r *http.Request) {
-	a.getEdge(w, r)
+	id := chi.URLParam(r, "edgeUuid")
+	var body map[string]any
+	if err := a.readJSON(r, &body); err != nil {
+		a.err(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	f, err := a.G.UpdateEntityEdge(r.Context(), id, body)
+	if err != nil {
+		a.err(w, http.StatusNotFound, "not found")
+		return
+	}
+	a.json(w, http.StatusOK, map[string]any{
+		"uuid": f.UUID, "name": f.Name, "fact": f.Fact, "created_at": f.CreatedAt,
+		"valid_at": f.ValidAt, "invalid_at": f.InvalidAt, "expired_at": f.ExpiredAt,
+		"source_node_uuid": f.SourceNodeUUID, "target_node_uuid": f.TargetNodeUUID,
+	})
 }
 
 func (a *API) deleteEdge(w http.ResponseWriter, r *http.Request) {
