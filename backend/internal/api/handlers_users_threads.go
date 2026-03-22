@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -63,9 +64,17 @@ func (a *API) getUsersOrdered(w http.ResponseWriter, r *http.Request) {
 	if size <= 0 {
 		size = 50
 	}
+	search := r.URL.Query().Get("search")
+
 	var users []store.User
 	q := a.DB.NewSelect().Model(&users).Where("project_uuid = ?", a.DB.Project).Order("id ASC").Limit(size).Offset((page - 1) * size)
-	count, _ := a.DB.NewSelect().Model((*store.User)(nil)).Where("project_uuid = ?", a.DB.Project).Count(r.Context())
+	countQ := a.DB.NewSelect().Model((*store.User)(nil)).Where("project_uuid = ?", a.DB.Project)
+	if search != "" {
+		like := "%" + search + "%"
+		q = q.Where("(user_id ILIKE ? OR email ILIKE ? OR first_name ILIKE ? OR last_name ILIKE ?)", like, like, like, like)
+		countQ = countQ.Where("(user_id ILIKE ? OR email ILIKE ? OR first_name ILIKE ? OR last_name ILIKE ?)", like, like, like, like)
+	}
+	count, _ := countQ.Count(r.Context())
 	if err := q.Scan(r.Context()); err != nil {
 		a.err(w, http.StatusInternalServerError, "db error")
 		return
@@ -156,15 +165,12 @@ func (a *API) getUserThreads(w http.ResponseWriter, r *http.Request) {
 		a.err(w, http.StatusInternalServerError, "db error")
 		return
 	}
+	// SDK (user.get_threads) expects a bare JSON array, not a wrapped object.
 	out := make([]any, 0, len(sessions))
 	for i := range sessions {
 		out = append(out, threadToJSON(&sessions[i], a.DB.Project))
 	}
-	a.json(w, http.StatusOK, map[string]any{
-		"threads":        out,
-		"total_count":    len(out),
-		"response_count": len(out),
-	})
+	a.json(w, http.StatusOK, out)
 }
 
 func (a *API) getUserNode(w http.ResponseWriter, r *http.Request) {
@@ -205,8 +211,24 @@ func (a *API) listThreads(w http.ResponseWriter, r *http.Request) {
 	if size <= 0 {
 		size = 50
 	}
+
+	// Honour order_by and asc query params from the SDK.
+	orderCol := "created_at"
+	switch r.URL.Query().Get("order_by") {
+	case "updated_at":
+		orderCol = "updated_at"
+	case "thread_id":
+		orderCol = "session_id"
+	}
+	direction := "DESC"
+	if r.URL.Query().Get("asc") == "true" {
+		direction = "ASC"
+	}
+
 	var sessions []store.Session
-	err := a.DB.NewSelect().Model(&sessions).Where("project_uuid = ?", a.DB.Project).Order("created_at DESC").Limit(size).Offset((page - 1) * size).Scan(r.Context())
+	err := a.DB.NewSelect().Model(&sessions).Where("project_uuid = ?", a.DB.Project).
+		OrderExpr(orderCol + " " + direction).
+		Limit(size).Offset((page - 1) * size).Scan(r.Context())
 	if err != nil {
 		a.err(w, http.StatusInternalServerError, "db error")
 		return
@@ -320,7 +342,8 @@ func (a *API) addThreadMessagesInner(w http.ResponseWriter, r *http.Request, _ b
 			Name     string         `json:"name"`
 			UUID     string         `json:"uuid"`
 		} `json:"messages"`
-		ReturnContext *bool `json:"return_context"`
+		ReturnContext *bool    `json:"return_context"`
+		IgnoreRoles  []string `json:"ignore_roles"`
 	}
 	if err := a.readJSON(r, &body); err != nil {
 		a.err(w, http.StatusBadRequest, "invalid body")
@@ -330,6 +353,12 @@ func (a *API) addThreadMessagesInner(w http.ResponseWriter, r *http.Request, _ b
 	if err := a.DB.NewSelect().Model(&s).Where("session_id = ? AND project_uuid = ?", tid, a.DB.Project).Scan(r.Context()); err != nil {
 		a.err(w, http.StatusNotFound, "thread not found")
 		return
+	}
+
+	// Build a set of normalized roles to exclude from graph ingestion.
+	ignoreSet := make(map[string]bool, len(body.IgnoreRoles))
+	for _, role := range body.IgnoreRoles {
+		ignoreSet[normalizeRoleType(role)] = true
 	}
 
 	// Create a task to track async graph processing
@@ -373,7 +402,10 @@ func (a *API) addThreadMessagesInner(w http.ResponseWriter, r *http.Request, _ b
 			return
 		}
 		uuids = append(uuids, mid)
-		gmsgs = append(gmsgs, graphitiMessageFromStore(msg))
+		// Only send to Graphiti if the role is not in the ignore set.
+		if !ignoreSet[msg.RoleType] {
+			gmsgs = append(gmsgs, graphitiMessageFromStore(msg))
+		}
 	}
 
 	// AddMessages queues to graphiti async worker (returns 202 when accepted)
@@ -422,11 +454,51 @@ func (a *API) getThreadContext(w http.ResponseWriter, r *http.Request) {
 		a.err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	ctx := ""
+
+	// Build the base facts string from Graphiti memory.
+	factsStr := ""
 	for _, f := range mem.Facts {
-		ctx += f.Fact + "\n"
+		factsStr += f.Fact + "\n"
 	}
-	a.json(w, http.StatusOK, map[string]any{"context": ctx})
+
+	// Apply context template if template_id query param is present.
+	templateID := r.URL.Query().Get("template_id")
+	contextStr := factsStr
+	if templateID != "" {
+		var tmpl store.ContextTemplate
+		if err := a.DB.NewSelect().Model(&tmpl).Where("id = ? AND project_uuid = ?", templateID, a.DB.Project).Scan(r.Context()); err == nil {
+			// Replace {{context}} placeholder with facts; if absent, append facts after template.
+			if strings.Contains(tmpl.Content, "{{context}}") {
+				contextStr = strings.Replace(tmpl.Content, "{{context}}", factsStr, 1)
+			} else {
+				contextStr = tmpl.Content + "\n" + factsStr
+			}
+		}
+	}
+
+	// Prepend any project-level custom instructions so the consumer knows how to use this context.
+	var customInstructions []store.CustomInstructionRow
+	_ = a.DB.NewSelect().Model(&customInstructions).Where("project_uuid = ?", a.DB.Project).Scan(r.Context())
+	if len(customInstructions) > 0 {
+		preamble := ""
+		for _, ins := range customInstructions {
+			preamble += ins.Text + "\n"
+		}
+		contextStr = preamble + "\n" + contextStr
+	}
+
+	// Append any user summary instructions as a trailing guidance section.
+	var summaryInstructions []store.UserSummaryInstructionRow
+	_ = a.DB.NewSelect().Model(&summaryInstructions).Where("project_uuid = ?", a.DB.Project).Scan(r.Context())
+	if len(summaryInstructions) > 0 {
+		suffix := ""
+		for _, ins := range summaryInstructions {
+			suffix += ins.Text + "\n"
+		}
+		contextStr = contextStr + "\n" + suffix
+	}
+
+	a.json(w, http.StatusOK, map[string]any{"context": contextStr})
 }
 
 func (a *API) patchMessage(w http.ResponseWriter, r *http.Request) {

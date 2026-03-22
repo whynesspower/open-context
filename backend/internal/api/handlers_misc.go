@@ -10,10 +10,14 @@ import (
 )
 
 func (a *API) projectInfo(w http.ResponseWriter, r *http.Request) {
+	// SDK (project.get_info) expects {"project": {"name", "uuid", "description", "created_at"}}.
 	a.json(w, http.StatusOK, map[string]any{
-		"project_name": a.Cfg.OpenContextName,
-		"version":      a.Cfg.OpenContextVersion,
-		"project_uuid": a.DB.Project.String(),
+		"project": map[string]any{
+			"name":        a.Cfg.OpenContextName,
+			"uuid":        a.DB.Project.String(),
+			"description": "",
+			"created_at":  nil,
+		},
 	})
 }
 
@@ -25,7 +29,42 @@ func (a *API) getTask(w http.ResponseWriter, r *http.Request) {
 		a.err(w, http.StatusNotFound, "task not found")
 		return
 	}
-	a.json(w, http.StatusOK, map[string]any{"task_id": t.TaskID, "status": t.Status, "progress": t.Progress, "error": t.Error})
+
+	// SDK TaskProgress expects {message: str, stage: str}, not a float.
+	progressMsg := "Processing"
+	switch t.Status {
+	case "completed":
+		progressMsg = "Completed successfully"
+	case "failed":
+		progressMsg = "Failed"
+	case "pending":
+		progressMsg = "Pending"
+	}
+
+	// SDK TaskErrorResponse expects {code: str, details: {}, message: str}, not a plain string.
+	var errObj any
+	if t.Error != "" {
+		errObj = map[string]any{"code": "", "details": map[string]any{}, "message": t.Error}
+	}
+
+	// completed_at is the updated_at timestamp once the task reaches a terminal state.
+	var completedAt any
+	if t.Status == "completed" || t.Status == "failed" {
+		completedAt = ts(t.UpdatedAt)
+	}
+
+	a.json(w, http.StatusOK, map[string]any{
+		"task_id":      t.TaskID,
+		"status":       t.Status,
+		"progress":     map[string]any{"message": progressMsg, "stage": t.Status},
+		"error":        errObj,
+		"created_at":   ts(t.CreatedAt),
+		"updated_at":   ts(t.UpdatedAt),
+		"completed_at": completedAt,
+		"started_at":   nil,
+		"type":         nil,
+		"params":       nil,
+	})
 }
 
 func (a *API) listContextTemplates(w http.ResponseWriter, r *http.Request) {
