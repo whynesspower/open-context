@@ -68,7 +68,7 @@ func (a *API) Handler() http.Handler {
 
 		r.Post("/graph/search", a.graphSearch)
 		r.Post("/graph/create", a.graphCreate)
-		r.Post("/graph/list-all", a.graphListAll)
+		r.Get("/graph/list-all", a.graphListAll)
 		r.Get("/graph/{graphId}", a.graphGet)
 		r.Patch("/graph/{graphId}", a.graphPatch)
 		r.Delete("/graph/{graphId}", a.graphDelete)
