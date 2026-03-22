@@ -1,5 +1,7 @@
 # open-context
 
+<img width="1024" height="1024" alt="image" src="https://github.com/user-attachments/assets/14ead1b9-6119-4949-a1a5-d0dc5a6c80fb" />
+
 Self-hosted **Zep Cloud–compatible** API (`/api/v2`) backed by **PostgreSQL**, **Graphiti**, and **Neo4j**, with an **admin UI** and a **FastAPI + zep-python** example.
 
 ## quick start (docker)
