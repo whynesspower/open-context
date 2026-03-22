@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from functools import partial
 
 from fastapi import APIRouter, FastAPI, status
-from graphiti_core.nodes import EpisodeType  # type: ignore
+from graphiti_core.nodes import EntityNode, EpisodeType  # type: ignore
 from graphiti_core.utils.maintenance.graph_data_operations import clear_data  # type: ignore
 
 from graph_service.dto import AddEntityNodeRequest, AddFactTripleRequest, AddMessagesRequest, Message, Result
@@ -82,6 +82,20 @@ async def add_entity_node(
         summary=request.summary,
     )
     return node
+
+
+@router.delete('/node/{uuid}', status_code=status.HTTP_200_OK)
+async def delete_node(uuid: str, graphiti: ZepGraphitiDep):
+    from graphiti_core.errors import NodeNotFoundError
+
+    try:
+        node = await EntityNode.get_by_uuid(graphiti.driver, uuid)
+        await node.delete(graphiti.driver)
+    except NodeNotFoundError as e:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return Result(message='Node deleted', success=True)
 
 
 @router.delete('/entity-edge/{uuid}', status_code=status.HTTP_200_OK)

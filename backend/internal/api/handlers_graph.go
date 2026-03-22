@@ -332,6 +332,11 @@ func (a *API) patchNode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) deleteNode(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "nodeUuid")
+	if err := a.G.DeleteNode(r.Context(), id); err != nil {
+		a.err(w, http.StatusNotFound, "not found")
+		return
+	}
 	a.json(w, http.StatusOK, map[string]any{"message": "ok"})
 }
 
