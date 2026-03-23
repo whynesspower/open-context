@@ -1,3 +1,21 @@
+<p align="center">
+  <a href="https://whynesspower.com/">
+    <img src="https://github.com/user-attachments/assets/14ead1b9-6119-4949-a1a5-d0dc5a6c80fb" width="150" alt="Open Context Logo">
+  </a>
+</p>
+
+<h1 align="center">
+Open Context: An open source platform for Context Graphs & Engineering for your AI agents
+</h1>
+
+<h2 align="center">Examples, Graph Engine, & More</h2>
+
+<br />
+
+<p align="center">
+  <a href="https://twitter.com/intent/follow?screen_name=whyesspower" target="_new"><img alt="Twitter Follow" src="https://img.shields.io/twitter/follow/whynesspower"></a>
+</p>
+
 # Open Context
 
 Open Context is a self-hosted context service for AI applications that want a **Zep Cloud-compatible** API without depending on a hosted control plane. It combines a Go API, PostgreSQL persistence, Graphiti-powered graph extraction, Neo4j storage, and a lightweight admin UI so you can ingest conversations, build relationship-aware memory, and query it through the familiar `/api/v2` surface.
