@@ -30,8 +30,18 @@ func (a *API) graphSearch(w http.ResponseWriter, r *http.Request) {
 	if raw, ok := body["graph_id"].(string); ok && raw != "" {
 		gids = append(gids, raw)
 	}
-	if raw, ok := body["user_id"].(string); ok && raw != "" {
-		gids = append(gids, raw)
+	if uid, ok := body["user_id"].(string); ok && uid != "" {
+		gids = append(gids, uid)
+		// Include all the user's thread IDs so user-scoped searches
+		// return facts extracted from conversations, matching Zep Cloud behavior.
+		var sessions []store.Session
+		_ = a.DB.NewSelect().Model(&sessions).
+			Column("session_id").
+			Where("user_id = ? AND project_uuid = ?", uid, a.DB.Project).
+			Scan(r.Context())
+		for _, s := range sessions {
+			gids = append(gids, s.SessionID)
+		}
 	}
 	if arr, ok := body["group_ids"].([]any); ok {
 		for _, x := range arr {
