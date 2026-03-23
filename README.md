@@ -13,7 +13,7 @@ Open Context: An open source platform for Context Graphs & Engineering for your 
 <br />
 
 <p align="center">
-  <a href="https://twitter.com/intent/follow?screen_name=whyesspower" target="_new"><img alt="Twitter Follow" src="https://img.shields.io/twitter/follow/whynesspower"></a>
+  <a href="https://twitter.com/intent/follow?screen_name=whynesspower" target="_new"><img alt="Twitter Follow" src="https://img.shields.io/twitter/follow/whynesspower"></a>
 </p>
 
 # Open Context
@@ -105,3 +105,38 @@ The Go `/api/v2` surface is implemented to be SDK-compatible for common flows, i
 ## Commit Style
 
 Use angular-style, lowercase messages, one small logical change per commit, for example `feat: add thread list handler`. The project targets a high commit count over its lifetime, so prefer many tiny commits over large squashes.
+
+
+## Disclaimer
+
+**Open Context** is an independent, open-source project that provides a self-hosted 
+alternative implementation compatible with the Zep Cloud API specification (`/api/v2`). 
+
+**This project is not affiliated with, endorsed by, or maintained by Zep or GetZep.com.** 
+It is not an official Zep product or distribution.
+
+### Key Points:
+
+- **Independent Implementation**: Open Context is a separate implementation that achieves 
+  API compatibility with Zep Cloud's published SDK interface for interoperability purposes, 
+  allowing users to self-host their own context management infrastructure.
+
+- **No Trademark Infringement**: The use of "Zep-compatible" is purely descriptive and 
+  refers only to API compatibility with the published Zep Cloud `/api/v2` specification. 
+  This project does not use Zep trademarks, logos, or branding.
+
+- **Respect for Original Work**: Open Context acknowledges that **Graphiti** and the 
+  temporal context graph architecture are pioneering work by the Zep team. Graphiti 
+  is open-sourced under its own license and is vendored within this project with 
+  full attribution. See `graphiti/README.md` for details.
+
+- **All Rights Reserved**: All intellectual property, trademarks, and copyrights related 
+  to Zep, Zep Cloud, and the original Zep architecture remain the exclusive property of 
+  GetZep.com and its creators.
+
+- **Self-Hosted Alternative**: Open Context is intended as a self-hosted option for 
+  developers who wish to run their own context infrastructure using compatible APIs. 
+  For managed, production-grade context infrastructure with enterprise support, please 
+  visit [Zep](https://www.getzep.com).
+
+---
