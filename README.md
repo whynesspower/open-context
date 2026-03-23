@@ -1,13 +1,20 @@
+<p align="center">
+  <a href="https://whynesspower.com/">
+    <img src="https://github.com/user-attachments/assets/fc8df502-bdd2-4e20-a845-4f185113e3c9" width="150" alt="Open Context Logo">
+  </a>
+</p>
 
+<h1 align="center">
+Open Context: An open source platform for Context Graphs & Engineering for your AI agents
+</h1>
 
-# Open Context: An open source platform for Context Graphs & Engineering for your AI agents
+<h2 align="center">Examples, Context Graph Engine, SDKs & More</h2>
 
-## Examples, Graph Engine, & More
+<br />
 
-  
-
-
-
+<p align="center">
+  <a href="https://twitter.com/intent/follow?screen_name=whynesspower" target="_new"><img alt="Twitter Follow" src="https://img.shields.io/twitter/follow/whynesspower"></a>
+</p>
 
 # Open Context
 
