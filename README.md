@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://whynesspower.com/">
-    <img src="https://github.com/user-attachments/assets/14ead1b9-6119-4949-a1a5-d0dc5a6c80fb" width="150" alt="Open Context Logo">
+    <img src="https://github.com/user-attachments/assets/fc8df502-bdd2-4e20-a845-4f185113e3c9" width="150" alt="Open Context Logo">
   </a>
 </p>
 
