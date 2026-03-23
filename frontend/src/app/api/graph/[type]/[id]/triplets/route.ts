@@ -1,5 +1,7 @@
-import { cookies } from "next/headers";
-import { NextResponse } from "next/server";
+import { cookies } from 'next/headers';
+import { NextResponse } from 'next/server';
+
+import { getAdminCookieName, verifyAdminSession } from '@/lib/admin-auth';
 
 type Node = { uuid: string; name: string; summary?: string; labels?: string[] };
 type Edge = {
@@ -34,8 +36,9 @@ async function zepFetch(path: string, init?: RequestInit) {
 
 export async function GET(_: Request, ctx: { params: Promise<{ type: string; id: string }> }) {
   const jar = await cookies();
-  if (jar.get("oc_admin")?.value !== "1") {
-    return NextResponse.json({ message: "unauthorized" }, { status: 401 });
+  const session = await verifyAdminSession(jar.get(getAdminCookieName())?.value);
+  if (!session) {
+    return NextResponse.json({ message: 'unauthorized' }, { status: 401 });
   }
   const { type, id } = await ctx.params;
   const group = encodeURIComponent(id);
