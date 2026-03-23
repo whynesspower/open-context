@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -21,12 +23,25 @@ func (a *API) graphSearch(w http.ResponseWriter, r *http.Request) {
 	if v, ok := body["limit"].(float64); ok {
 		max = int(v)
 	}
+	if v, ok := body["max_facts"].(float64); ok {
+		max = int(v)
+	}
 	var gids []string
 	if raw, ok := body["graph_id"].(string); ok && raw != "" {
 		gids = append(gids, raw)
 	}
-	if raw, ok := body["user_id"].(string); ok && raw != "" {
-		gids = append(gids, raw)
+	if uid, ok := body["user_id"].(string); ok && uid != "" {
+		gids = append(gids, uid)
+		// Include all the user's thread IDs so user-scoped searches
+		// return facts extracted from conversations, matching Zep Cloud behavior.
+		var sessions []store.Session
+		_ = a.DB.NewSelect().Model(&sessions).
+			Column("session_id").
+			Where("user_id = ? AND project_uuid = ?", uid, a.DB.Project).
+			Scan(r.Context())
+		for _, s := range sessions {
+			gids = append(gids, s.SessionID)
+		}
 	}
 	if arr, ok := body["group_ids"].([]any); ok {
 		for _, x := range arr {
@@ -35,16 +50,56 @@ func (a *API) graphSearch(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	res, err := a.G.Search(r.Context(), graphiti.SearchQuery{GroupIDs: gids, Query: q, MaxFacts: max})
+
+	sq := graphiti.SearchQuery{GroupIDs: gids, Query: q, MaxFacts: max}
+
+	if v, ok := body["scope"].(string); ok && v != "" {
+		sq.Scope = v
+	}
+	if v, ok := body["reranker"].(string); ok && v != "" {
+		sq.Reranker = v
+	}
+	if v, ok := body["mmr_lambda"].(float64); ok {
+		sq.MmrLambda = &v
+	}
+	if v, ok := body["center_node_uuid"].(string); ok && v != "" {
+		sq.CenterNodeUUID = v
+	}
+	if arr, ok := body["bfs_origin_node_uuids"].([]any); ok {
+		for _, x := range arr {
+			if s, ok := x.(string); ok {
+				sq.BfsOriginNodeUUIDs = append(sq.BfsOriginNodeUUIDs, s)
+			}
+		}
+	}
+
+	res, err := a.G.Search(r.Context(), sq)
 	if err != nil {
 		a.err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
 	edges := make([]map[string]any, 0, len(res.Facts))
 	for _, f := range res.Facts {
 		edges = append(edges, factToEdge(f))
 	}
-	a.json(w, http.StatusOK, map[string]any{"edges": edges, "nodes": []any{}})
+	nodes := make([]map[string]any, 0, len(res.Nodes))
+	for _, n := range res.Nodes {
+		nodes = append(nodes, map[string]any{
+			"uuid": n.UUID, "name": n.Name, "summary": n.Summary,
+			"labels": n.Labels, "created_at": n.CreatedAt,
+			"score": nil, "relevance": nil, "attributes": map[string]any{},
+		})
+	}
+	episodes := make([]map[string]any, 0, len(res.Episodes))
+	for _, ep := range res.Episodes {
+		episodes = append(episodes, map[string]any{
+			"uuid": ep.UUID, "name": ep.Name, "group_id": ep.GroupID,
+			"source": ep.Source, "source_description": ep.SourceDescription,
+			"content": ep.Content, "created_at": ep.CreatedAt,
+		})
+	}
+	a.json(w, http.StatusOK, map[string]any{"edges": edges, "nodes": nodes, "episodes": episodes})
 }
 
 func factToEdge(f graphiti.FactResult) map[string]any {
@@ -52,6 +107,7 @@ func factToEdge(f graphiti.FactResult) map[string]any {
 		"uuid": f.UUID, "name": f.Name, "fact": f.Fact,
 		"created_at": f.CreatedAt, "valid_at": f.ValidAt, "invalid_at": f.InvalidAt, "expired_at": f.ExpiredAt,
 		"source_node_uuid": f.SourceNodeUUID, "target_node_uuid": f.TargetNodeUUID,
+		"score": f.Score, "relevance": f.Relevance, "attributes": f.Attributes, "episodes": []any{},
 	}
 }
 
@@ -65,8 +121,15 @@ func (a *API) graphCreate(w http.ResponseWriter, r *http.Request) {
 	if gid == "" {
 		gid = uuid.NewString()
 	}
+	name, _ := body["name"].(string)
+	if name == "" {
+		name = gid
+	}
+	desc, _ := body["description"].(string)
 	rec := &store.GraphRecord{
 		GraphID:     gid,
+		Name:        name,
+		Description: desc,
 		ProjectUUID: a.DB.Project,
 		Metadata:    asMap(body["metadata"]),
 	}
@@ -83,12 +146,13 @@ func (a *API) graphCreate(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) graphListAll(w http.ResponseWriter, r *http.Request) {
 	var graphs []store.GraphRecord
+	total, _ := a.DB.NewSelect().Model((*store.GraphRecord)(nil)).Where("project_uuid = ?", a.DB.Project).Count(r.Context())
 	_ = a.DB.NewSelect().Model(&graphs).Where("project_uuid = ?", a.DB.Project).Order("created_at DESC").Limit(500).Scan(r.Context())
 	out := make([]any, 0, len(graphs))
 	for i := range graphs {
 		out = append(out, graphToJSON(&graphs[i]))
 	}
-	a.json(w, http.StatusOK, map[string]any{"graphs": out})
+	a.json(w, http.StatusOK, map[string]any{"graphs": out, "row_count": len(out), "total_count": total})
 }
 
 func (a *API) graphGet(w http.ResponseWriter, r *http.Request) {
@@ -115,6 +179,12 @@ func (a *API) graphPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if m := asMap(body["metadata"]); m != nil {
 		g.Metadata = m
+	}
+	if v, ok := body["name"].(string); ok && v != "" {
+		g.Name = v
+	}
+	if v, ok := body["description"].(string); ok {
+		g.Description = v
 	}
 	g.UpdatedAt = a.now()
 	_, _ = a.DB.NewUpdate().Model(&g).WherePK().Exec(r.Context())
@@ -157,20 +227,56 @@ func (a *API) graphAddBatch(w http.ResponseWriter, r *http.Request) {
 		a.err(w, http.StatusBadRequest, "invalid body: expected array")
 		return
 	}
-	results := make([]map[string]any, 0, len(items))
-	for _, item := range items {
-		group := firstString(item["graph_id"], item["user_id"])
-		if group == "" {
-			results = append(results, map[string]any{"error": "graph_id or user_id required"})
-			continue
-		}
-		data, _ := item["data"].(string)
-		typ, _ := item["type"].(string)
-		gm := graphiti.GMessage{Content: data, RoleType: "user", Role: typ, UUID: uuid.NewString()}
-		_ = a.G.AddMessages(r.Context(), group, []graphiti.GMessage{gm})
-		results = append(results, map[string]any{"uuid": gm.UUID, "content": data, "type": typ})
+
+	taskID := uuid.NewString()
+	task := &store.TaskRecord{
+		TaskID:      taskID,
+		Status:      "pending",
+		Progress:    0,
+		ProjectUUID: a.DB.Project,
+		CreatedAt:   a.now(),
+		UpdatedAt:   a.now(),
 	}
-	a.json(w, http.StatusOK, results)
+	_, _ = a.DB.NewInsert().Model(task).Exec(r.Context())
+
+	// Process batch asynchronously so caller can poll task status
+	go func(items []map[string]any, taskID string) {
+		ctx := context.Background()
+		total := len(items)
+		processed := 0
+		var lastErr error
+		for _, item := range items {
+			group := firstString(item["graph_id"], item["user_id"])
+			if group == "" {
+				processed++
+				continue
+			}
+			data, _ := item["data"].(string)
+			typ, _ := item["type"].(string)
+			gm := graphiti.GMessage{Content: data, RoleType: "user", Role: typ, UUID: uuid.NewString()}
+			if err := a.G.AddMessages(ctx, group, []graphiti.GMessage{gm}); err != nil {
+				lastErr = err
+			}
+			processed++
+			progress := float64(processed) / float64(total)
+			_, _ = a.DB.NewUpdate().Model(&store.TaskRecord{}).
+				Set("status = ?, progress = ?, updated_at = ?", "processing", progress, time.Now().UTC()).
+				Where("task_id = ?", taskID).
+				Exec(ctx)
+		}
+		status := "completed"
+		errMsg := ""
+		if lastErr != nil {
+			status = "failed"
+			errMsg = lastErr.Error()
+		}
+		_, _ = a.DB.NewUpdate().Model(&store.TaskRecord{}).
+			Set("status = ?, progress = ?, error = ?, updated_at = ?", status, 1.0, errMsg, time.Now().UTC()).
+			Where("task_id = ?", taskID).
+			Exec(ctx)
+	}(items, taskID)
+
+	a.json(w, http.StatusOK, map[string]any{"task_id": taskID, "status": "pending"})
 }
 
 func (a *API) graphAddFactTriple(w http.ResponseWriter, r *http.Request) {
@@ -232,6 +338,8 @@ func (a *API) graphClone(w http.ResponseWriter, r *http.Request) {
 
 	newRec := &store.GraphRecord{
 		GraphID:     dstGraphID,
+		Name:        srcGraph.Name,
+		Description: srcGraph.Description,
 		ProjectUUID: a.DB.Project,
 		Metadata:    srcGraph.Metadata,
 		UserID:      srcGraph.UserID,
@@ -241,10 +349,31 @@ func (a *API) graphClone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Clone nodes first, building old→new UUID map for edge remapping
 	nodes, _ := a.G.ListNodes(r.Context(), srcGraphID, 500)
+	nodeUUIDMap := make(map[string]string, len(nodes))
 	for _, n := range nodes {
+		newUUID := uuid.NewString()
+		nodeUUIDMap[n.UUID] = newUUID
 		_ = a.G.AddEntityNode(r.Context(), graphiti.AddEntityNodeRequest{
-			UUID: uuid.NewString(), GroupID: dstGraphID, Name: n.Name, Summary: n.Summary,
+			UUID: newUUID, GroupID: dstGraphID, Name: n.Name, Summary: n.Summary,
+		})
+	}
+
+	// Clone edges, remapping source/target UUIDs to cloned node UUIDs
+	edges, _ := a.G.ListEdges(r.Context(), srcGraphID, 500)
+	for _, e := range edges {
+		newSrc := nodeUUIDMap[e.SourceNodeUUID]
+		newTgt := nodeUUIDMap[e.TargetNodeUUID]
+		if newSrc == "" || newTgt == "" {
+			continue
+		}
+		_, _ = a.G.AddFactTriple(r.Context(), graphiti.AddFactTripleRequest{
+			Subject:   newSrc,
+			Predicate: e.Name,
+			Object:    newTgt,
+			GroupID:   dstGraphID,
+			Fact:      e.Fact,
 		})
 	}
 
@@ -253,6 +382,7 @@ func (a *API) graphClone(w http.ResponseWriter, r *http.Request) {
 		"source_graph_id": srcGraphID,
 		"new_graph_id":    dstGraphID,
 		"nodes_cloned":    len(nodes),
+		"edges_cloned":    len(edges),
 	})
 }
 
@@ -268,8 +398,14 @@ func (a *API) graphPatterns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nodes, _ := a.G.ListNodes(r.Context(), graphID, 500)
-	edges, _ := a.G.ListEdges(r.Context(), graphID, 500)
+	nodes, err := a.G.ListNodes(r.Context(), graphID, 500)
+	if err != nil {
+		nodes = nil
+	}
+	edges, err := a.G.ListEdges(r.Context(), graphID, 500)
+	if err != nil {
+		edges = nil
+	}
 
 	labelCounts := map[string]int{}
 	for _, n := range nodes {
@@ -353,6 +489,7 @@ func nodesToSDK(nodes []graphiti.GraphitiNode) []map[string]any {
 		out = append(out, map[string]any{
 			"uuid": n.UUID, "name": n.Name, "summary": n.Summary, "labels": n.Labels,
 			"created_at": n.CreatedAt,
+			"score": nil, "relevance": nil, "attributes": map[string]any{},
 		})
 	}
 	return out
@@ -366,6 +503,7 @@ func edgesToSDK(edges []graphiti.GraphitiEdge) []map[string]any {
 			"source_node_uuid": e.SourceNodeUUID, "target_node_uuid": e.TargetNodeUUID,
 			"created_at": e.CreatedAt, "valid_at": e.ValidAt, "invalid_at": e.InvalidAt, "expired_at": e.ExpiredAt,
 			"episodes": e.Episodes,
+			"score": nil, "relevance": nil, "attributes": map[string]any{},
 		})
 	}
 	return out
@@ -411,6 +549,7 @@ func (a *API) getNode(w http.ResponseWriter, r *http.Request) {
 	a.json(w, http.StatusOK, map[string]any{
 		"uuid": n.UUID, "name": n.Name, "summary": n.Summary,
 		"labels": n.Labels, "created_at": n.CreatedAt,
+		"score": nil, "relevance": nil, "attributes": map[string]any{},
 	})
 }
 
@@ -429,6 +568,7 @@ func (a *API) patchNode(w http.ResponseWriter, r *http.Request) {
 	a.json(w, http.StatusOK, map[string]any{
 		"uuid": n.UUID, "name": n.Name, "summary": n.Summary,
 		"labels": n.Labels, "created_at": n.CreatedAt,
+		"score": nil, "relevance": nil, "attributes": map[string]any{},
 	})
 }
 
@@ -474,6 +614,7 @@ func (a *API) getEdge(w http.ResponseWriter, r *http.Request) {
 		"uuid": f.UUID, "name": f.Name, "fact": f.Fact, "created_at": f.CreatedAt,
 		"valid_at": f.ValidAt, "invalid_at": f.InvalidAt, "expired_at": f.ExpiredAt,
 		"source_node_uuid": f.SourceNodeUUID, "target_node_uuid": f.TargetNodeUUID,
+		"score": nil, "relevance": nil, "attributes": map[string]any{},
 	})
 }
 
@@ -493,6 +634,7 @@ func (a *API) patchEdge(w http.ResponseWriter, r *http.Request) {
 		"uuid": f.UUID, "name": f.Name, "fact": f.Fact, "created_at": f.CreatedAt,
 		"valid_at": f.ValidAt, "invalid_at": f.InvalidAt, "expired_at": f.ExpiredAt,
 		"source_node_uuid": f.SourceNodeUUID, "target_node_uuid": f.TargetNodeUUID,
+		"score": nil, "relevance": nil, "attributes": map[string]any{},
 	})
 }
 
@@ -570,8 +712,13 @@ func (a *API) deleteEpisode(w http.ResponseWriter, r *http.Request) {
 
 func graphToJSON(g *store.GraphRecord) map[string]any {
 	m := map[string]any{
-		"graph_id": g.GraphID, "metadata": g.Metadata, "created_at": ts(g.CreatedAt),
-		"project_uuid": g.ProjectUUID.String(), "uuid": g.UUID.String(),
+		"graph_id":     g.GraphID,
+		"name":         g.Name,
+		"description":  g.Description,
+		"metadata":     g.Metadata,
+		"created_at":   ts(g.CreatedAt),
+		"project_uuid": g.ProjectUUID.String(),
+		"uuid":         g.UUID.String(),
 	}
 	if g.UserID != nil {
 		m["user_id"] = *g.UserID

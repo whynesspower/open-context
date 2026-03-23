@@ -161,4 +161,9 @@ CREATE TABLE IF NOT EXISTS entity_types (
     PRIMARY KEY (uuid),
     UNIQUE (project_uuid)
 );
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS disable_default_ontology BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE graphs ADD COLUMN IF NOT EXISTS name VARCHAR;
+ALTER TABLE graphs ADD COLUMN IF NOT EXISTS description TEXT;
 `

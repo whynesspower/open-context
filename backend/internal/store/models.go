@@ -11,17 +11,18 @@ import (
 type User struct {
 	bun.BaseModel `bun:"table:users,alias:u"`
 
-	UUID        uuid.UUID      `bun:"type:uuid,pk,default:gen_random_uuid()"`
-	ID          int64          `bun:",autoincrement"`
-	CreatedAt   time.Time      `bun:",nullzero,notnull,default:current_timestamp"`
-	UpdatedAt   time.Time      `bun:",nullzero,notnull,default:current_timestamp"`
-	DeletedAt   bun.NullTime   `bun:",soft_delete,nullzero"`
-	UserID      string         `bun:",unique,notnull"`
-	Email       string         `bun:""`
-	FirstName   string         `bun:""`
-	LastName    string         `bun:""`
-	ProjectUUID uuid.UUID      `bun:"type:uuid,notnull"`
-	Metadata    map[string]any `bun:"type:jsonb,nullzero"`
+	UUID                   uuid.UUID      `bun:"type:uuid,pk,default:gen_random_uuid()"`
+	ID                     int64          `bun:",autoincrement"`
+	CreatedAt              time.Time      `bun:",nullzero,notnull,default:current_timestamp"`
+	UpdatedAt              time.Time      `bun:",nullzero,notnull,default:current_timestamp"`
+	DeletedAt              bun.NullTime   `bun:",soft_delete,nullzero"`
+	UserID                 string         `bun:",unique,notnull"`
+	Email                  string         `bun:""`
+	FirstName              string         `bun:""`
+	LastName               string         `bun:""`
+	ProjectUUID            uuid.UUID      `bun:"type:uuid,notnull"`
+	Metadata               map[string]any `bun:"type:jsonb,nullzero"`
+	DisableDefaultOntology bool           `bun:",nullzero,default:false"`
 }
 
 type Session struct {
@@ -76,6 +77,8 @@ type GraphRecord struct {
 	UUID        uuid.UUID      `bun:"type:uuid,pk,default:gen_random_uuid()"`
 	GraphID     string         `bun:",unique,notnull"`
 	UserID      *string        `bun:""`
+	Name        string         `bun:",nullzero"`
+	Description string         `bun:",nullzero"`
 	ProjectUUID uuid.UUID      `bun:"type:uuid,notnull"`
 	Metadata    map[string]any `bun:"type:jsonb,nullzero"`
 	CreatedAt   time.Time      `bun:",nullzero,notnull,default:current_timestamp"`

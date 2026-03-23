@@ -3,12 +3,26 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, status
 
 from graphiti_core.edges import EntityEdge  # type: ignore
+from graphiti_core.errors import GroupsEdgesNotFoundError  # type: ignore
 from graphiti_core.nodes import EntityNode  # type: ignore
+from graphiti_core.search.search_config import (  # type: ignore
+    EdgeReranker,
+    EdgeSearchConfig,
+    EdgeSearchMethod,
+    EpisodeReranker,
+    EpisodeSearchConfig,
+    EpisodeSearchMethod,
+    NodeReranker,
+    NodeSearchConfig,
+    NodeSearchMethod,
+    SearchConfig,
+)
 
 from fastapi import HTTPException
 
 from graph_service.dto import (
     EdgeResult,
+    EpisodeResult,
     GetMemoryRequest,
     GetMemoryResponse,
     Message,
@@ -16,22 +30,129 @@ from graph_service.dto import (
     SearchQuery,
     SearchResults,
 )
+from graph_service.dto.retrieve import SearchReranker, SearchScope
 from graph_service.zep_graphiti import ZepGraphitiDep, get_fact_result_from_edge
 
 router = APIRouter()
 
 
+def _map_edge_reranker(r: SearchReranker) -> EdgeReranker:
+    return {
+        SearchReranker.rrf: EdgeReranker.rrf,
+        SearchReranker.mmr: EdgeReranker.mmr,
+        SearchReranker.node_distance: EdgeReranker.node_distance,
+        SearchReranker.episode_mentions: EdgeReranker.episode_mentions,
+        SearchReranker.cross_encoder: EdgeReranker.cross_encoder,
+    }[r]
+
+
+def _map_node_reranker(r: SearchReranker) -> NodeReranker:
+    return {
+        SearchReranker.rrf: NodeReranker.rrf,
+        SearchReranker.mmr: NodeReranker.mmr,
+        SearchReranker.node_distance: NodeReranker.node_distance,
+        SearchReranker.episode_mentions: NodeReranker.episode_mentions,
+        SearchReranker.cross_encoder: NodeReranker.cross_encoder,
+    }[r]
+
+
+def _map_episode_reranker(r: SearchReranker) -> EpisodeReranker:
+    mapping: dict[SearchReranker, EpisodeReranker] = {
+        SearchReranker.rrf: EpisodeReranker.rrf,
+        SearchReranker.cross_encoder: EpisodeReranker.cross_encoder,
+    }
+    return mapping.get(r, EpisodeReranker.rrf)
+
+
+def _build_search_config(query: SearchQuery) -> SearchConfig:
+    scope = query.scope
+    reranker = query.reranker
+    mmr_lambda = query.mmr_lambda
+
+    if scope == SearchScope.episodes:
+        ep_reranker = _map_episode_reranker(reranker) if reranker else EpisodeReranker.rrf
+        ep_config = EpisodeSearchConfig(
+            search_methods=[EpisodeSearchMethod.bm25],
+            reranker=ep_reranker,
+        )
+        if mmr_lambda is not None:
+            ep_config.mmr_lambda = mmr_lambda
+        return SearchConfig(episode_config=ep_config, limit=query.max_facts)
+
+    if scope == SearchScope.nodes:
+        n_reranker = _map_node_reranker(reranker) if reranker else NodeReranker.rrf
+        n_config = NodeSearchConfig(
+            search_methods=[NodeSearchMethod.bm25, NodeSearchMethod.cosine_similarity],
+            reranker=n_reranker,
+        )
+        if mmr_lambda is not None:
+            n_config.mmr_lambda = mmr_lambda
+        return SearchConfig(node_config=n_config, limit=query.max_facts)
+
+    e_reranker = _map_edge_reranker(reranker) if reranker else EdgeReranker.rrf
+    e_config = EdgeSearchConfig(
+        search_methods=[EdgeSearchMethod.bm25, EdgeSearchMethod.cosine_similarity],
+        reranker=e_reranker,
+    )
+    if mmr_lambda is not None:
+        e_config.mmr_lambda = mmr_lambda
+    return SearchConfig(edge_config=e_config, limit=query.max_facts)
+
+
 @router.post('/search', status_code=status.HTTP_200_OK)
 async def search(query: SearchQuery, graphiti: ZepGraphitiDep):
-    relevant_edges = await graphiti.search(
-        group_ids=query.group_ids,
+    has_advanced = (
+        query.scope is not None
+        or query.reranker is not None
+        or query.mmr_lambda is not None
+        or query.center_node_uuid is not None
+        or query.bfs_origin_node_uuids is not None
+    )
+
+    if not has_advanced:
+        relevant_edges = await graphiti.search(
+            group_ids=query.group_ids,
+            query=query.query,
+            num_results=query.max_facts,
+            center_node_uuid=query.center_node_uuid,
+        )
+        facts = [get_fact_result_from_edge(edge) for edge in relevant_edges]
+        return SearchResults(facts=facts)
+
+    config = _build_search_config(query)
+    results = await graphiti.search_(
         query=query.query,
-        num_results=query.max_facts,
+        config=config,
+        group_ids=query.group_ids,
+        center_node_uuid=query.center_node_uuid,
+        bfs_origin_node_uuids=query.bfs_origin_node_uuids,
     )
-    facts = [get_fact_result_from_edge(edge) for edge in relevant_edges]
-    return SearchResults(
-        facts=facts,
-    )
+
+    facts = [get_fact_result_from_edge(edge) for edge in results.edges]
+    nodes = [
+        NodeResult(
+            uuid=n.uuid,
+            name=n.name,
+            summary=n.summary or '',
+            labels=list(n.labels) if n.labels else None,
+            group_id=n.group_id,
+            created_at=n.created_at,
+        )
+        for n in results.nodes
+    ]
+    episodes = [
+        EpisodeResult(
+            uuid=ep.uuid,
+            name=ep.name,
+            group_id=ep.group_id,
+            source=ep.source.value if ep.source else None,
+            source_description=ep.source_description,
+            content=ep.content,
+            created_at=ep.created_at,
+        )
+        for ep in results.episodes
+    ]
+    return SearchResults(facts=facts, nodes=nodes, episodes=episodes)
 
 
 @router.get('/entity-edge/{uuid}', status_code=status.HTTP_200_OK)
@@ -176,6 +297,7 @@ async def get_memory(
         group_ids=[request.group_id],
         query=combined_query,
         num_results=request.max_facts,
+        center_node_uuid=request.center_node_uuid,
     )
     facts = [get_fact_result_from_edge(edge) for edge in result]
     return GetMemoryResponse(facts=facts)
@@ -283,7 +405,10 @@ async def list_nodes(group_id: str, graphiti: ZepGraphitiDep, limit: int = 500):
 @router.get('/edges/{group_id}', status_code=status.HTTP_200_OK)
 async def list_edges(group_id: str, graphiti: ZepGraphitiDep, limit: int = 500):
     cap = max(1, min(limit, 500))
-    edges = await EntityEdge.get_by_group_ids(graphiti.driver, [group_id])
+    try:
+        edges = await EntityEdge.get_by_group_ids(graphiti.driver, [group_id])
+    except GroupsEdgesNotFoundError:
+        edges = []
     out: list[EdgeResult] = []
     for e in edges[:cap]:
         out.append(
