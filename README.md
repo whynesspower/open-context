@@ -1,8 +1,21 @@
-# open-context
+# Open Context
 
-Self-hosted **Zep Cloud–compatible** API (`/api/v2`) backed by **PostgreSQL**, **Graphiti**, and **Neo4j**, with an **admin UI** and a **FastAPI + zep-python** example.
+Open Context is a self-hosted context service for AI applications that want a **Zep Cloud-compatible** API without depending on a hosted control plane. It combines a Go API, PostgreSQL persistence, Graphiti-powered graph extraction, Neo4j storage, and a lightweight admin UI so you can ingest conversations, build relationship-aware memory, and query it through the familiar `/api/v2` surface.
 
-## quick start (docker)
+## What It Does
+
+Open Context is designed for teams that want to run agent memory and graph-backed context retrieval on their own infrastructure while keeping compatibility with existing Zep-style SDK flows.
+
+### How it works
+
+1. **Ingest messages and metadata** through the Zep-compatible API.
+2. **Persist operational state** in PostgreSQL and forward graph-relevant data to Graphiti.
+3. **Build temporal graph structure** in Neo4j for nodes, edges, episodes, and search.
+4. **Retrieve context and graph data** from the same API contract used by existing clients.
+
+## Quick Start
+
+### Docker setup
 
 1. Copy env:
 
@@ -12,31 +25,33 @@ cp .env.example .env
 
 2. Set `OPENAI_API_KEY` and `OPEN_CONTEXT_API_KEY` in `.env`.
 
+Before you start the stack, replace the sample defaults in `.env` for `OPEN_CONTEXT_API_KEY` and `OPEN_CONTEXT_ADMIN_*`. The example values are convenient for local development, but they should not be used outside a private machine.
+
 3. Start stack:
 
 ```bash
 docker compose --env-file .env up --build
 ```
 
-Services:
+### Services
 
 - `http://localhost:8000` — Go API (`Authorization: Api-Key …`)
 - `http://localhost:8003` — Graphiti
 - `http://localhost:3000` — Admin UI (login from `OPEN_CONTEXT_ADMIN_*`)
 - `http://localhost:8080` — Example FastAPI (`/docs`)
 
-## sdk configuration
+## SDK Configuration
 
 `zep-python` reads `ZEP_API_URL` (host only) and `ZEP_API_KEY`. Point them at this backend:
 
 ```bash
 export ZEP_API_URL=http://localhost:8000
-export ZEP_API_KEY=changeme
+export ZEP_API_KEY=your-open-context-api-key
 ```
 
-Open Context’s own settings use the `OPEN_CONTEXT_*` names; compose maps `ZEP_API_KEY` from `OPEN_CONTEXT_API_KEY` for the example container.
+Open Context’s own settings use the `OPEN_CONTEXT_*` names; compose maps `ZEP_API_KEY` from `OPEN_CONTEXT_API_KEY` for the example container. Use the same value you configured for `OPEN_CONTEXT_API_KEY` in `.env`.
 
-## repo layout
+## Repository Layout
 
 - `backend/` — Go service implementing `/api/v2`
 - `graphiti/` — vendored Graphiti + FastAPI graph service
@@ -44,21 +59,18 @@ Open Context’s own settings use the `OPEN_CONTEXT_*` names; compose maps `ZEP_
 - `frontend/` — Next.js admin + D3 graph view
 - `examples/fastapi-app/` — minimal SDK demo
 
-## commit style
+## Notes
 
-Use **angular-style**, **lowercase** messages, one small logical change per commit, e.g. `feat: add thread list handler`. The project targets a **high commit count** (on the order of **~500** over its lifetime); prefer many tiny commits over large squashes.
+- API path remains `/api/v2` to match the official SDKs (SDK major version != URL version).
+- Legacy Zep CE (`zep/legacy`) is a reference for patterns only; feature coverage is driven by the current SDK surface.
+- This monorepo vendors `graphiti/` and `sdks/zep-python/` without nested `.git/` metadata so everything can be tracked in one repository. If you re-copy those trees from upstream, remove their inner `.git` (or use submodules) before committing.
 
-## notes
+## Implementation Status
 
-- API path remains `/api/v2` to match the official SDKs (SDK major version ≠ URL version).
-- Legacy Zep CE (`zep/legacy`) is a **reference** for patterns only; feature coverage is driven by the current SDK surface.
-- This monorepo vendors `graphiti/` and `sdks/zep-python/` **without nested `.git/` metadata** so everything can be tracked in one repository. If you re-copy those trees from upstream, remove their inner `.git` (or use submodules) before committing.
+The Go `/api/v2` surface is implemented to be SDK-compatible for common flows, including users, threads and messages, graph search, nodes and edges listing, episode proxying, templates, instructions, and entity types.
 
-## implementation status
+### Completed SDK compatibility fixes
 
-The Go `/api/v2` surface is implemented to be **SDK-compatible** for common flows (users, threads/messages, graph search, nodes/edges listing, episodes proxy, templates, instructions, entity types).
-
-**Completed SDK compatibility fixes:**
 - `GET /users/{id}/threads` returns a bare JSON array (matches `List[Thread]` parse in SDK)
 - `GET /tasks/{id}` returns `progress` as `{message, stage}` and `error` as `{code, details, message}` objects with all timestamp fields
 - `GET /projects/info` nests response under `project` key with correct field names
@@ -67,8 +79,11 @@ The Go `/api/v2` surface is implemented to be **SDK-compatible** for common flow
 - `GET /threads` respects `order_by` and `asc` query params for sorting
 - `GET /users-ordered` respects `search` query param for filtering by user_id, email, first/last name
 
-**Pending — requires architectural changes:**
+### Pending architectural work
 
-- [ ] **Entity types → Graphiti ontology push**: `PUT /entity-types` saves custom entity/edge type definitions to Postgres but does not push them to the Graphiti Python service. Graphiti processes entity extraction via LLM prompts; injecting custom entity types requires modifying the `/messages` ingest route in `graphiti/server/graph_service/routers/ingest.py` to look up entity type definitions and include them in the extraction prompt. This is a cross-service change that touches the Python service.
+- [ ] **Entity types -> Graphiti ontology push**: `PUT /entity-types` saves custom entity and edge type definitions to PostgreSQL but does not push them to the Graphiti Python service. Graphiti processes entity extraction via LLM prompts; injecting custom entity types requires modifying the `/messages` ingest route in `graphiti/server/graph_service/routers/ingest.py` to look up entity type definitions and include them in the extraction prompt. This is a cross-service change that touches the Python service.
+- [ ] **`POST /graph/patterns` -> LLM-based pattern detection**: the SDK's `graph.detect_patterns()` expects `DetectPatternsResponse` from an LLM-analyzed pattern scan. The current implementation returns statistical frequency counts (label distribution, edge name counts, highest-degree node). A full implementation needs an LLM call from the Go backend or Graphiti service to analyze the graph and return typed pattern objects matching the SDK schema.
 
-- [ ] **`POST /graph/patterns` — LLM-based pattern detection**: The SDK's `graph.detect_patterns()` expects `DetectPatternsResponse` from an LLM-analyzed pattern scan. The current implementation returns statistical frequency counts (label distribution, edge name counts, highest-degree node). A full implementation needs an LLM call from the Go backend (or Graphiti service) to analyze the graph and return typed pattern objects matching the SDK's schema.
+## Commit Style
+
+Use angular-style, lowercase messages, one small logical change per commit, for example `feat: add thread list handler`. The project targets a high commit count over its lifetime, so prefer many tiny commits over large squashes.
