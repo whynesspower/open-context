@@ -1,22 +1,85 @@
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Annotated
 
 from fastapi import Depends, HTTPException
 from graphiti_core import Graphiti  # type: ignore
+from graphiti_core.driver.driver import GraphProvider
 from graphiti_core.edges import EntityEdge  # type: ignore
 from graphiti_core.errors import EdgeNotFoundError, GroupsEdgesNotFoundError, NodeNotFoundError
 from graphiti_core.llm_client import LLMClient  # type: ignore
+from graphiti_core.models.nodes import node_db_queries
 from graphiti_core.nodes import EntityNode, EpisodicNode  # type: ignore
+from graphiti_core.utils import bulk_utils
 
 from graph_service.config import ZepEnvDep
 from graph_service.dto import FactResult
 
 logger = logging.getLogger(__name__)
 
+_original_get_entity_node_save_bulk_query = node_db_queries.get_entity_node_save_bulk_query
+
+
+def _patched_get_entity_node_save_bulk_query(
+    provider: GraphProvider, nodes=None, has_aoss: bool = False
+):
+    if provider != GraphProvider.NEO4J:
+        return _original_get_entity_node_save_bulk_query(provider, nodes, has_aoss)
+
+    save_embedding_query = (
+        'WITH n, node CALL db.create.setNodeVectorProperty(n, "name_embedding", node.name_embedding)'
+        if not has_aoss
+        else ''
+    )
+
+    return (
+        """
+            UNWIND $nodes AS node
+            MERGE (n:Entity {uuid: node.uuid})
+            SET n = node
+            REMOVE n.labels
+            """
+        + ('REMOVE n.name_embedding\n' if not has_aoss else '')
+        + save_embedding_query
+        + """
+            RETURN n.uuid AS uuid
+        """
+    )
+
+
+# graphiti-core 0.28.x uses SET n:$(node.labels), which is rejected by the
+# Neo4j version in open-context's compose stack. Patch both import sites.
+node_db_queries.get_entity_node_save_bulk_query = _patched_get_entity_node_save_bulk_query
+bulk_utils.get_entity_node_save_bulk_query = _patched_get_entity_node_save_bulk_query
+
 
 class ZepGraphiti(Graphiti):
     def __init__(self, uri: str, user: str, password: str, llm_client: LLMClient | None = None):
         super().__init__(uri, user, password, llm_client)
+
+    async def _run_with_partition_group_ids(self, fn: Callable[[], Awaitable]):
+        original_clone = getattr(self.driver, 'clone', None)
+
+        # graphiti-core can treat group_id as a physical Neo4j database name.
+        # open-context uses group_id only as a logical partition inside the same
+        # Neo4j database, so keep all queries pinned to the existing driver.
+        self.driver.clone = lambda database=None: self.driver  # type: ignore[method-assign]
+
+        try:
+            return await fn()
+        finally:
+            if original_clone is not None:
+                self.driver.clone = original_clone  # type: ignore[method-assign]
+
+    async def add_episode(self, *args, **kwargs):
+        return await self._run_with_partition_group_ids(
+            lambda: Graphiti.add_episode(self, *args, **kwargs)
+        )
+
+    async def add_episode_bulk(self, *args, **kwargs):
+        return await self._run_with_partition_group_ids(
+            lambda: Graphiti.add_episode_bulk(self, *args, **kwargs)
+        )
 
     async def save_entity_node(self, name: str, uuid: str, group_id: str, summary: str = ''):
         new_node = EntityNode(

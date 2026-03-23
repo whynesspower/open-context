@@ -75,9 +75,14 @@ type AddMessagesRequest struct {
 }
 
 type SearchQuery struct {
-	GroupIDs []string `json:"group_ids,omitempty"`
-	Query    string   `json:"query"`
-	MaxFacts int      `json:"max_facts"`
+	GroupIDs           []string `json:"group_ids,omitempty"`
+	Query              string   `json:"query"`
+	MaxFacts           int      `json:"max_facts"`
+	Scope              string   `json:"scope,omitempty"`
+	Reranker           string   `json:"reranker,omitempty"`
+	MmrLambda          *float64 `json:"mmr_lambda,omitempty"`
+	CenterNodeUUID     string   `json:"center_node_uuid,omitempty"`
+	BfsOriginNodeUUIDs []string `json:"bfs_origin_node_uuids,omitempty"`
 }
 
 type FactResult struct {
@@ -95,8 +100,29 @@ type FactResult struct {
 	Attributes     map[string]any `json:"attributes"`
 }
 
+type NodeSearchResult struct {
+	UUID      string   `json:"uuid"`
+	Name      string   `json:"name"`
+	Summary   string   `json:"summary"`
+	Labels    []string `json:"labels,omitempty"`
+	GroupID   string   `json:"group_id,omitempty"`
+	CreatedAt string   `json:"created_at,omitempty"`
+}
+
+type EpisodeSearchResult struct {
+	UUID              string  `json:"uuid"`
+	Name              *string `json:"name"`
+	GroupID           *string `json:"group_id"`
+	Source            *string `json:"source"`
+	SourceDescription *string `json:"source_description"`
+	Content           *string `json:"content"`
+	CreatedAt         *string `json:"created_at"`
+}
+
 type SearchResults struct {
-	Facts []FactResult `json:"facts"`
+	Facts    []FactResult          `json:"facts"`
+	Nodes    []NodeSearchResult    `json:"nodes"`
+	Episodes []EpisodeSearchResult `json:"episodes"`
 }
 
 type GetMemoryRequest struct {

@@ -884,10 +884,9 @@ class Graphiti:
             group_id = get_default_group_id(self.driver.provider)
         else:
             validate_group_id(group_id)
-            if group_id != self.driver._database:
-                # if group_id is provided, use it as the database name
-                self.driver = self.driver.clone(database=group_id)
-                self.clients.driver = self.driver
+            # open-context uses group_id as a logical partition within one Neo4j
+            # database, not as a physical Neo4j database name. Cloning the driver
+            # to target database=group_id breaks ids like "thread-123".
 
         with self.tracer.start_span('add_episode') as span:
             try:
@@ -1110,10 +1109,8 @@ class Graphiti:
                     group_id = get_default_group_id(self.driver.provider)
                 else:
                     validate_group_id(group_id)
-                    if group_id != self.driver._database:
-                        # if group_id is provided, use it as the database name
-                        self.driver = self.driver.clone(database=group_id)
-                        self.clients.driver = self.driver
+                    # open-context keeps all groups in the same Neo4j database and
+                    # uses group_id only for partitioning/filtering.
 
                 # Create default edge type map
                 edge_type_map_default = (

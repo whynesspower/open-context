@@ -40,16 +40,56 @@ func (a *API) graphSearch(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	res, err := a.G.Search(r.Context(), graphiti.SearchQuery{GroupIDs: gids, Query: q, MaxFacts: max})
+
+	sq := graphiti.SearchQuery{GroupIDs: gids, Query: q, MaxFacts: max}
+
+	if v, ok := body["scope"].(string); ok && v != "" {
+		sq.Scope = v
+	}
+	if v, ok := body["reranker"].(string); ok && v != "" {
+		sq.Reranker = v
+	}
+	if v, ok := body["mmr_lambda"].(float64); ok {
+		sq.MmrLambda = &v
+	}
+	if v, ok := body["center_node_uuid"].(string); ok && v != "" {
+		sq.CenterNodeUUID = v
+	}
+	if arr, ok := body["bfs_origin_node_uuids"].([]any); ok {
+		for _, x := range arr {
+			if s, ok := x.(string); ok {
+				sq.BfsOriginNodeUUIDs = append(sq.BfsOriginNodeUUIDs, s)
+			}
+		}
+	}
+
+	res, err := a.G.Search(r.Context(), sq)
 	if err != nil {
 		a.err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
 	edges := make([]map[string]any, 0, len(res.Facts))
 	for _, f := range res.Facts {
 		edges = append(edges, factToEdge(f))
 	}
-	a.json(w, http.StatusOK, map[string]any{"edges": edges, "nodes": []any{}, "episodes": []any{}})
+	nodes := make([]map[string]any, 0, len(res.Nodes))
+	for _, n := range res.Nodes {
+		nodes = append(nodes, map[string]any{
+			"uuid": n.UUID, "name": n.Name, "summary": n.Summary,
+			"labels": n.Labels, "created_at": n.CreatedAt,
+			"score": nil, "relevance": nil, "attributes": map[string]any{},
+		})
+	}
+	episodes := make([]map[string]any, 0, len(res.Episodes))
+	for _, ep := range res.Episodes {
+		episodes = append(episodes, map[string]any{
+			"uuid": ep.UUID, "name": ep.Name, "group_id": ep.GroupID,
+			"source": ep.Source, "source_description": ep.SourceDescription,
+			"content": ep.Content, "created_at": ep.CreatedAt,
+		})
+	}
+	a.json(w, http.StatusOK, map[string]any{"edges": edges, "nodes": nodes, "episodes": episodes})
 }
 
 func factToEdge(f graphiti.FactResult) map[string]any {

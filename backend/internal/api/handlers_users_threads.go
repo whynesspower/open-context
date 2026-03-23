@@ -293,27 +293,54 @@ func (a *API) deleteThread(w http.ResponseWriter, r *http.Request) {
 func (a *API) getThreadMessages(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "threadId")
 
-	// Fetch thread to get created_at and user_id
 	var s store.Session
 	if err := a.DB.NewSelect().Model(&s).Where("session_id = ? AND project_uuid = ?", id, a.DB.Project).Scan(r.Context()); err != nil {
 		a.err(w, http.StatusNotFound, "thread not found")
 		return
 	}
 
+	totalCount, _ := a.DB.NewSelect().Model((*store.Message)(nil)).
+		Where("session_id = ? AND project_uuid = ?", id, a.DB.Project).Count(r.Context())
+
+	lastN, _ := strconv.Atoi(r.URL.Query().Get("lastn"))
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	cursor, _ := strconv.Atoi(r.URL.Query().Get("cursor"))
+
 	var msgs []store.Message
-	err := a.DB.NewSelect().Model(&msgs).Where("session_id = ? AND project_uuid = ?", id, a.DB.Project).Order("id ASC").Scan(r.Context())
-	if err != nil {
+	q := a.DB.NewSelect().Model(&msgs).
+		Where("session_id = ? AND project_uuid = ?", id, a.DB.Project)
+
+	if lastN > 0 {
+		q = q.Order("id DESC").Limit(lastN)
+	} else {
+		q = q.Order("id ASC")
+		if limit > 0 {
+			q = q.Limit(limit)
+		}
+		if cursor > 0 {
+			q = q.Offset(cursor)
+		}
+	}
+
+	if err := q.Scan(r.Context()); err != nil {
 		a.err(w, http.StatusInternalServerError, "db error")
 		return
 	}
+
+	if lastN > 0 {
+		for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+			msgs[i], msgs[j] = msgs[j], msgs[i]
+		}
+	}
+
 	out := make([]any, 0, len(msgs))
 	for i := range msgs {
 		out = append(out, messageToJSON(&msgs[i]))
 	}
 	resp := map[string]any{
-		"messages":         out,
-		"row_count":        len(out),
-		"total_count":      len(out),
+		"messages":          out,
+		"row_count":         len(out),
+		"total_count":       totalCount,
 		"thread_created_at": ts(s.CreatedAt),
 	}
 	if s.UserID != nil {
@@ -455,19 +482,27 @@ func (a *API) getThreadContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build the base facts string from Graphiti memory.
 	factsStr := ""
+	structuredFacts := make([]map[string]any, 0, len(mem.Facts))
 	for _, f := range mem.Facts {
 		factsStr += f.Fact + "\n"
+		sf := map[string]any{
+			"fact":      f.Fact,
+			"name":      f.Name,
+			"uuid":      f.UUID,
+			"valid_at":  f.ValidAt,
+			"invalid_at": f.InvalidAt,
+			"created_at": f.CreatedAt,
+			"expired_at": f.ExpiredAt,
+		}
+		structuredFacts = append(structuredFacts, sf)
 	}
 
-	// Apply context template if template_id query param is present.
 	templateID := r.URL.Query().Get("template_id")
 	contextStr := factsStr
 	if templateID != "" {
 		var tmpl store.ContextTemplate
 		if err := a.DB.NewSelect().Model(&tmpl).Where("id = ? AND project_uuid = ?", templateID, a.DB.Project).Scan(r.Context()); err == nil {
-			// Replace {{context}} placeholder with facts; if absent, append facts after template.
 			if strings.Contains(tmpl.Content, "{{context}}") {
 				contextStr = strings.Replace(tmpl.Content, "{{context}}", factsStr, 1)
 			} else {
@@ -476,7 +511,6 @@ func (a *API) getThreadContext(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Prepend any project-level custom instructions so the consumer knows how to use this context.
 	var customInstructions []store.CustomInstructionRow
 	_ = a.DB.NewSelect().Model(&customInstructions).Where("project_uuid = ?", a.DB.Project).Scan(r.Context())
 	if len(customInstructions) > 0 {
@@ -487,7 +521,6 @@ func (a *API) getThreadContext(w http.ResponseWriter, r *http.Request) {
 		contextStr = preamble + "\n" + contextStr
 	}
 
-	// Append any user summary instructions as a trailing guidance section.
 	var summaryInstructions []store.UserSummaryInstructionRow
 	_ = a.DB.NewSelect().Model(&summaryInstructions).Where("project_uuid = ?", a.DB.Project).Scan(r.Context())
 	if len(summaryInstructions) > 0 {
@@ -498,7 +531,7 @@ func (a *API) getThreadContext(w http.ResponseWriter, r *http.Request) {
 		contextStr = contextStr + "\n" + suffix
 	}
 
-	a.json(w, http.StatusOK, map[string]any{"context": contextStr})
+	a.json(w, http.StatusOK, map[string]any{"context": contextStr, "facts": structuredFacts})
 }
 
 func (a *API) patchMessage(w http.ResponseWriter, r *http.Request) {
